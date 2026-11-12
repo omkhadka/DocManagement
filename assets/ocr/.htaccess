@@ -1,0 +1,8 @@
+# OCR engine files: large and unchanging, let browsers cache them for 30 days
+<IfModule mod_mime.c>
+  AddType application/javascript .js
+  AddType application/octet-stream .traineddata
+</IfModule>
+<IfModule mod_headers.c>
+  Header set Cache-Control "public, max-age=2592000"
+</IfModule>

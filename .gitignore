@@ -1,0 +1,17 @@
+# Server-specific settings: database password and the app key. NEVER commit.
+app/config.php
+
+# Uploaded documents, sessions and logs (if kept inside the site folder)
+storage/
+
+# Release packages and archives
+*.tar.gz
+*.zip
+
+# Editor / OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.log

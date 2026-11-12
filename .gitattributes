@@ -1,0 +1,11 @@
+# Keep Linux line endings so files behave the same on the cPanel server
+* text=auto eol=lf
+*.sh text eol=lf
+# Binary files: never touch
+*.png binary
+*.jpg binary
+*.wasm binary
+*.traineddata binary
+*.wasm.js -diff
+*.min.js -diff
+assets/app.js -diff linguist-generated

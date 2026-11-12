@@ -1,0 +1,4 @@
+Third-party components bundled for in-browser text recognition (OCR):
+- tesseract.js 5.1.1 and tesseract.js-core 5.1.1 — Apache License 2.0 — https://github.com/naptha/tesseract.js
+- Tesseract OCR English model (4.0.0_best_int, via @tesseract.js-data/eng) — Apache License 2.0 / MIT
+- PDF.js (pdfjs-dist) 3.11.174 — Apache License 2.0 — https://github.com/mozilla/pdf.js
