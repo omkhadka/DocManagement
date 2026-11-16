@@ -19,8 +19,11 @@ function next_doc_number(int $libId, ?int $typeId): string {
 
 function ver_label($major, $minor): string { return (int)$major . '.' . (int)$minor; }
 
+const BLOCKED_EXT = ['php', 'php3', 'php4', 'php5', 'php7', 'php8', 'phtml', 'phar', 'pht', 'phps', 'shtml', 'htaccess', 'htpasswd', 'cgi', 'pl', 'py', 'sh',
+    'asp', 'aspx', 'jsp', 'exe', 'com', 'bat', 'cmd', 'ps1', 'vbs', 'js', 'mjs', 'html', 'htm', 'xhtml', 'hta', 'scr', 'msi', 'dll', 'jar'];
 function allowed_ext(): array {
-    return array_filter(array_map('trim', explode(',', strtolower((string)setting('allowed_ext', 'pdf,docx,xlsx,pptx,txt')))));
+    $list = array_filter(array_map('trim', explode(',', strtolower((string)setting('allowed_ext', 'pdf,docx,xlsx,pptx,txt')))));
+    return array_values(array_diff($list, BLOCKED_EXT));
 }
 
 /** Moves an uploaded file into storage. Returns file facts. */
@@ -58,8 +61,9 @@ function version_path(array $v): string { return storage_path('files/' . substr(
 
 /** Rebuilds the search index text for a document. */
 function reindex_doc(int $docId): void {
-    $d = one('SELECT current_version_id FROM documents WHERE id=?', [$docId]);
+    $d = one('SELECT COALESCE(published_version_id, current_version_id) AS vid FROM documents WHERE id=?', [$docId]);
     if (!$d) return;
+    $d['current_version_id'] = $d['vid'];   // the version readers see; drafts are only indexed until a first version is published
     $txt = (string)val('SELECT extracted_text FROM document_versions WHERE id=?', [$d['current_version_id']]);
     $meta = all('SELECT value FROM document_meta WHERE document_id=?', [$docId]);
     $terms = all('SELECT t.label, t.synonyms FROM document_terms dt JOIN terms t ON t.id=dt.term_id WHERE dt.document_id=?', [$docId]);

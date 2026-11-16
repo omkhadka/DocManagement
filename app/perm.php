@@ -111,7 +111,8 @@ function doc_level(array $d, ?array $u = null): int {
     if ($isOwner || $base >= LVL_CONTRIBUTE) return max($base, $named);
     $lib = perm_ctx($u)['libInfo'][(int)$d['library_id']] ?? null;
     if ($lib && $lib['department_id'] !== null && (int)$lib['department_id'] === $u['department_id']) return max($base, $named);
-    $approver = $base >= LVL_APPROVE || ($u['role'] === 'head' && $lib && ($lib['approval_mode'] === 'any_head' || ((int)$lib['department_id'] === $u['department_id'])));
+    // department heads count as approvers only while the approval workflow is on
+    $approver = $base >= LVL_APPROVE || (approvals_on() && $u['role'] === 'head' && $lib && ($lib['approval_mode'] === 'any_head' || ((int)$lib['department_id'] === $u['department_id'])));
     return $approver ? max($base, $named) : $named;
 }
 
@@ -132,7 +133,7 @@ function users_who_can_see(array $ids, array $d): array {
 function classification_rule(string $conf): string {
     return [
         'restricted' => 'Restricted: only administrators, the author and people named on the document can see it.',
-        'confidential' => 'Confidential: only administrators, the author, the owning department, approvers, contributors and people named on the document can see it.',
+        'confidential' => 'Confidential: only administrators, the author, the owning department, ' . (approvals_on() ? 'approvers, ' : 'people with Approve access, ') . 'contributors and people named on the document can see it.',
     ][$conf] ?? '';
 }
 
@@ -142,7 +143,7 @@ function can_approve_doc(array $d, ?array $u = null): bool {
     if ($u['role'] === 'admin') return true;
     $lv = doc_level($d, $u);
     if ($lv >= LVL_APPROVE) return true;
-    if ($u['role'] !== 'head' || $lv < LVL_READ) return false;
+    if (!approvals_on() || $u['role'] !== 'head' || $lv < LVL_READ) return false;   // heads approve only while the workflow is on
     $lib = perm_ctx($u)['libInfo'][(int)$d['library_id']] ?? null;
     if (!$lib) return false;
     if ($lib['approval_mode'] === 'any_head') return true;
@@ -210,4 +211,13 @@ function explain_access(array $u, string $scope, int $id): array {
         if (principal_matches($r, $u)) $grants[] = ['principal_type' => $r['principal_type'], 'principal_id' => $r['principal_id'], 'level' => (int)$r['level']];
     }
     return ['chain' => $chain, 'defining' => $defining, 'grants' => $grants];
+}
+
+/** Published documents are a permanent record: only administrators can delete them.
+    An unpublished draft can be deleted by its author (with Contribute) or by someone with Full control. */
+function can_delete_doc(array $d, array $u, ?int $lv = null): bool {
+    if (is_admin($u)) return true;
+    if (!empty($d['published_version_id'])) return false;
+    $lv = $lv ?? doc_level($d, $u);
+    return ((int)$d['owner_id'] === (int)$u['id'] && $lv >= LVL_CONTRIBUTE) || $lv >= LVL_FULL;
 }

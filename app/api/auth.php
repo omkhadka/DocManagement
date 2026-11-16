@@ -5,7 +5,7 @@ function public_settings(): array {
     return [
         'site_name' => setting('site_name', 'TGISL Knowledge Hub'), 'org_name' => setting('org_name', ''),
         'welcome_text' => setting('welcome_text', ''), 'max_upload_mb' => (int)setting('max_upload_mb', 100),
-        'allowed_ext' => allowed_ext(), 'version' => KM_VERSION,
+        'allowed_ext' => allowed_ext(), 'version' => KM_VERSION, 'approvals' => approvals_on(),
         'server_upload_mb' => (int)min(ini_bytes(ini_get('upload_max_filesize')), ini_bytes(ini_get('post_max_size'))) / 1048576,
     ];
 }
@@ -59,6 +59,7 @@ function complete_login(array $u, string $how = ''): array {
     session_regenerate_id(true);
     unset($_SESSION['mfa_uid'], $_SESSION['mfa_at'], $_SESSION['mfa_mode'], $_SESSION['mfa_new_secret'], $_SESSION['mfa_tries']);
     $_SESSION['uid'] = (int)$u['id'];
+    bind_session_password((int)$u['id']);
     $_SESSION['csrf'] = bin2hex(random_bytes(24));
     update('users', ['failed_logins' => 0, 'locked_until' => null, 'last_login' => now()], 'id=?', [$u['id']]);
     insert('audit_log', ['user_id' => $u['id'], 'action' => 'login', 'object_type' => 'user', 'object_id' => $u['id'], 'details' => $how, 'ip' => client_ip()]);
@@ -185,12 +186,14 @@ function api_auth_mfa_status() {
 
 /** Checks a code for a signed-in user (for sensitive changes). */
 function require_current_code(array $u): void {
-    $row = one('SELECT mfa_secret, mfa_last_step FROM users WHERE id=?', [$u['id']]);
+    $row = one('SELECT mfa_secret, mfa_last_step, failed_logins, locked_until FROM users WHERE id=?', [$u['id']]);
+    check_lock($row);
     $code = trim(sarg('code', '', 40));
     if (preg_match('/^\d[\d ]*$/', $code)) {
         $step = totp_verify(mfa_decrypt($row['mfa_secret']), $code, (int)$row['mfa_last_step']);
         if ($step) { update('users', ['mfa_last_step' => $step], 'id=?', [$u['id']]); return; }
     } elseif ($code !== '' && mfa_use_recovery($u['id'], $code) >= 0) return;
+    count_failure(['id' => $u['id'], 'failed_logins' => $row['failed_logins']], 'mfa_failed');   // 5 wrong codes lock the account for 15 minutes
     fail('That code is not correct. Enter the newest 6-digit code from your authenticator app.', 422);
 }
 
@@ -241,6 +244,7 @@ function api_auth_change_password() {
     if (!password_verify($cur, $hash)) fail('Your current password is incorrect.');
     if (strlen($new) < 8) fail('Use at least 8 characters for the new password.');
     update('users', ['password_hash' => password_hash($new, PASSWORD_DEFAULT), 'must_change_pw' => 0], 'id=?', [$u['id']]);
+    bind_session_password($u['id']);   // this session stays signed in; any other session is signed out
     audit('password_change', 'user', $u['id']);
     return ['message' => 'Password changed.'];
 }

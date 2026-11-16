@@ -11,11 +11,12 @@ set_exception_handler(function (Throwable $e) {
 });
 
 start_session();
+expire_checkouts();
 $route = preg_replace('/[^a-z_.]/', '', strtolower((string)($_GET['r'] ?? '')));
 [$module, $action] = array_pad(explode('.', $route, 2), 2, '');
 $modules = ['auth', 'dash', 'libraries', 'docs', 'approvals', 'search', 'taxonomy', 'users', 'admin', 'notifications'];
 if (!in_array($module, $modules, true)) fail('Unknown request.', 404);
-require KM_APP . "/api/$module.php";
+require_once KM_APP . "/api/$module.php";
 $fn = "api_{$module}_{$action}";
 if (!function_exists($fn)) fail('Unknown request.', 404);
 

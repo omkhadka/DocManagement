@@ -19,8 +19,10 @@ route('/', async (page) => {
     <div class="hello"><div><h1>${greet}, ${esc(u.name.split(' ')[0])}</h1><p>${esc(S.settings.welcome_text || '')}</p></div>
       <div class="btn-row"><button class="btn primary" id="hUp">${icon('upload')}Upload documents</button><a class="btn" href="#/search">${icon('search')}Search</a></div></div>
     <div class="queue">
-      <a href="#/approvals" class="${r.pending ? 'attn' : ''}"><span class="n">${r.pending}</span><div><b>Waiting for your approval</b><span>${r.pending ? 'Review and publish' : 'Nothing to review'}</span></div></a>
-      <a href="#/my/mine"><span class="n">${r.myDrafts}</span><div><b>Your drafts & returns</b><span>Not yet published</span></div></a>
+      ${S.settings.approvals ? `<a href="#/approvals" class="${r.pending ? 'attn' : ''}"><span class="n">${r.pending}</span><div><b>Waiting for your approval</b><span>${r.pending ? 'Review and publish' : 'Nothing to review'}</span></div></a>
+      <a href="#/my/mine"><span class="n">${r.myDrafts}</span><div><b>Your drafts & returns</b><span>Not yet published</span></div></a>`
+      : `<a href="#/my/new"><span class="n">${r.newWeek}</span><div><b>New this week</b><span>Published in the last 7 days</span></div></a>
+      <a href="#/my/mine"><span class="n">${r.myCount}</span><div><b>Your documents</b><span>${r.myDrafts ? `${r.myDrafts} not yet published` : 'Everything you uploaded'}</span></div></a>`}
       <a href="#/my/review" class="${r.review.length ? 'attn' : ''}"><span class="n">${r.review.length}</span><div><b>Due for review</b><span>Overdue or due within 30 days</span></div></a>
       <a href="#/my/favorites" class="lime"><span class="n">${r.favs.length}</span><div><b>Favourites</b><span>Documents you follow</span></div></a>
     </div>
@@ -53,7 +55,8 @@ route('/', async (page) => {
 /* ================= Collections ================= */
 const COLLECTIONS = {
   favorites: ['Favourites', 'Documents you follow. You get a notification when a new version is published.', 'star'],
-  mine: ['My documents', 'Everything you have uploaded, including drafts and documents waiting for approval.', 'file'],
+  mine: ['My documents', 'Everything you have uploaded, including any unpublished drafts.', 'file'],
+  new: ['New this week', 'Documents published or updated with a new version in the last 7 days.', 'clock'],
   recent: ['Recent', 'Documents you viewed, downloaded or uploaded lately.', 'clock'],
   checked_out: ['Checked out to me', 'Documents you locked for editing. Upload a new version to check them in.', 'lock'],
   review: ['Due for review', 'Documents whose review date is past or within the next 30 days.', 'history'],
@@ -141,6 +144,7 @@ route('/search', async (page, _, params) => {
 /* ================= Approvals ================= */
 route('/approvals', async (page, _, params) => {
   setTitle('Approvals');
+  if (!S.settings.approvals) { page.innerHTML = emptyState('check', 'Approvals are switched off', 'Documents are published as soon as they’re uploaded. An administrator can switch approvals back on in Settings.'); return; }
   const tab = params.tab || 'queue';
   const r = await api('approvals.' + (tab === 'mine' ? 'mine' : tab === 'history' ? 'history' : 'queue'));
   const sel = new Set();

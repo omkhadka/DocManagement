@@ -65,6 +65,7 @@ function api_users_save() {
             }
         }
         update('users', $data, 'id=?', [$id]);
+        if ($pwSet && $id === $admin['id']) bind_session_password($id);   // keep the admin's own session
         audit('user_update', 'user', $id, $data['name'] . ' · ' . $data['role'] . ($data['active'] ? '' : ' · deactivated') . ($pwSet ? ' · password set by admin' : ''));
     } else {
         if ($pw === '') { $temp = substr(strtr(base64_encode(random_bytes(9)), '+/', 'Kx'), 0, 12); $pw = $temp; }

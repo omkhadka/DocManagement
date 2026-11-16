@@ -5,8 +5,8 @@
  */
 declare(strict_types=1);
 
-define('KM_VERSION', '1.3.2');
-define('KM_DB_VERSION', 3);
+define('KM_VERSION', '1.4.0');
+define('KM_DB_VERSION', 4);
 define('KM_ROOT', dirname(__DIR__));
 define('KM_APP', __DIR__);
 
@@ -77,15 +77,15 @@ function in_list(array $ids): string {
 
 /* ---------------- Settings ---------------- */
 function setting(string $k, $default = null) {
-    static $cache = null;
-    if ($cache === null) {
-        $cache = [];
-        try { foreach (all('SELECT k, v FROM settings') as $r) $cache[$r['k']] = $r['v']; } catch (Throwable $e) {}
+    if (!isset($GLOBALS['KM_SETTINGS'])) {
+        $GLOBALS['KM_SETTINGS'] = [];
+        try { foreach (all('SELECT k, v FROM settings') as $r) $GLOBALS['KM_SETTINGS'][$r['k']] = $r['v']; } catch (Throwable $e) {}
     }
-    return $cache[$k] ?? $default;
+    return $GLOBALS['KM_SETTINGS'][$k] ?? $default;
 }
 function set_setting(string $k, $v): void {
     q('INSERT INTO settings (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)', [$k, (string)$v]);
+    if (isset($GLOBALS['KM_SETTINGS'])) $GLOBALS['KM_SETTINGS'][$k] = (string)$v;
 }
 
 /* ---------------- Database upgrades ---------------- */
@@ -112,8 +112,44 @@ function km_migrate(): void {
     foreach ($vadd as $c => $def) if (!in_array($c, $vcols, true)) db()->exec("ALTER TABLE document_versions ADD COLUMN `$c` $def");
     if (setting('mfa_policy') === null) set_setting('mfa_policy', 'optional');
     if (setting('mfa_remember_days') === null) set_setting('mfa_remember_days', '30');
+    // v4: approval workflow switched off — uploads publish straight away; anything still waiting is published now
+    $fromV = (int)setting('db_version', 1);
+    if (setting('approval_workflow') === null) set_setting('approval_workflow', '0');
+    if ($fromV < 4 && setting('approval_workflow') === '0') km_publish_pending();
     set_setting('db_version', (string)KM_DB_VERSION);
-    try { insert('audit_log', ['action' => 'upgrade', 'object_type' => 'system', 'details' => 'Database upgraded to v' . KM_DB_VERSION . ' (two-step verification, text recognition)']); } catch (Throwable $e) {}
+    try { insert('audit_log', ['action' => 'upgrade', 'object_type' => 'system', 'details' => 'Database upgraded to v' . KM_DB_VERSION . ' (direct publishing without approval)']); } catch (Throwable $e) {}
+}
+
+/** Is the approval workflow on? Off (the default from v1.4) means uploads publish immediately. */
+function approvals_on(): bool { return setting('approval_workflow', '0') === '1'; }
+
+/** Publishes every document still waiting for approval (used when the workflow is switched off). Returns how many. */
+function km_publish_pending(?int $byUser = null): int {
+    $n = 0;
+    foreach (all("SELECT id, current_version_id, review_date, content_type_id FROM documents WHERE status='pending' AND deleted_at IS NULL") as $d) {
+        $a = one("SELECT id, version_id FROM approvals WHERE document_id=? AND decision='pending' ORDER BY id DESC LIMIT 1", [$d['id']]);
+        $verId = (int)($a['version_id'] ?? $d['current_version_id']);
+        $v = one('SELECT major, minor FROM document_versions WHERE id=?', [$verId]);
+        if (!$v) continue;
+        $major = (int)$v['major'];
+        if ((int)$v['minor'] !== 0) {
+            $major = (int)val('SELECT COALESCE(MAX(major),0) FROM document_versions WHERE document_id=? AND minor=0', [$d['id']]) + 1;
+            update('document_versions', ['major' => $major, 'minor' => 0], 'id=?', [$verId]);
+        }
+        $upd = ['status' => 'published', 'published_version_id' => $verId, 'updated_at' => date('Y-m-d H:i:s')];
+        if (!$d['review_date'] && $d['content_type_id']) {
+            $months = (int)val('SELECT review_months FROM content_types WHERE id=?', [$d['content_type_id']]);
+            if ($months) $upd['review_date'] = date('Y-m-d', strtotime("+$months months"));
+        }
+        update('documents', $upd, 'id=?', [$d['id']]);
+        q("UPDATE approvals SET decision='approved', decided_by=?, decided_at=?, note='Published automatically: approval workflow switched off' WHERE document_id=? AND decision='pending'",
+            [$byUser, date('Y-m-d H:i:s'), $d['id']]);
+        if (function_exists('reindex_doc')) reindex_doc((int)$d['id']);
+        try { insert('audit_log', ['user_id' => $byUser, 'action' => 'publish', 'object_type' => 'document', 'object_id' => (int)$d['id'],
+            'details' => "Version $major.0 · approval workflow switched off"]); } catch (Throwable $e) {}
+        $n++;
+    }
+    return $n;
 }
 
 /* ---------------- Session & auth ---------------- */
@@ -140,11 +176,14 @@ function current_user(bool $reload = false): ?array {
     if ($u !== false && !$reload) return $u;
     $u = null;
     if (!empty($_SESSION['uid'])) {
-        $u = one('SELECT u.id, u.name, u.email, u.role, u.department_id, u.job_title, u.phone, u.active, u.must_change_pw, u.mfa_enabled,
+        $u = one('SELECT u.id, u.name, u.email, u.role, u.department_id, u.job_title, u.phone, u.active, u.must_change_pw, u.mfa_enabled, u.password_hash,
                          d.name AS department, d.code AS department_code
                   FROM users u LEFT JOIN departments d ON d.id = u.department_id WHERE u.id = ?', [$_SESSION['uid']]);
-        if (!$u || !$u['active']) { $u = null; unset($_SESSION['uid']); }
+        // a password change or reset signs out every other session of that person
+        $stale = $u && isset($_SESSION['pwv']) && !hash_equals((string)$_SESSION['pwv'], pw_fingerprint((string)$u['password_hash']));
+        if (!$u || !$u['active'] || $stale) { $u = null; unset($_SESSION['uid'], $_SESSION['pwv']); }
         else {
+            unset($u['password_hash']);
             $u['id'] = (int)$u['id'];
             $u['mfa_enabled'] = (int)$u['mfa_enabled'];
             $u['must_change_pw'] = (int)$u['must_change_pw'];
@@ -153,6 +192,17 @@ function current_user(bool $reload = false): ?array {
         }
     }
     return $u;
+}
+function pw_fingerprint(string $hash): string { return substr(hash('sha256', 'pwv|' . $hash), 0, 20); }
+/** Remembers which password this session signed in with (call after sign-in or after the person changes it). */
+function bind_session_password(int $uid): void {
+    $_SESSION['pwv'] = pw_fingerprint((string)val('SELECT password_hash FROM users WHERE id=?', [$uid]));
+}
+
+/** Check-outs lapse after the configured number of hours, so a forgotten lock can't block a document for ever. */
+function expire_checkouts(): void {
+    $h = max(1, (int)setting('checkout_hours', 72));
+    q('UPDATE documents SET checked_out_by=NULL, checked_out_at=NULL WHERE checked_out_by IS NOT NULL AND checked_out_at < DATE_SUB(NOW(), INTERVAL ' . $h . ' HOUR)');
 }
 function me(): array {
     $u = current_user();
@@ -219,8 +269,11 @@ function notify(array $userIds, string $type, string $title, string $body = '', 
         insert('notifications', ['user_id' => $uid, 'type' => $type, 'title' => mb_substr($title, 0, 255), 'body' => mb_substr($body, 0, 500), 'link' => $link]);
     }
     if (setting('email_notifications', '0') === '1') {
-        $from = setting('mail_from', 'no-reply@' . ($_SERVER['HTTP_HOST'] ?? 'localhost'));
-        $site = setting('site_name', 'TGISL Knowledge Hub');
+        $oneLine = fn($s) => trim(preg_replace('/[\r\n\t]+/', ' ', (string)$s));
+        $from = $oneLine(setting('mail_from', ''));
+        if (!filter_var($from, FILTER_VALIDATE_EMAIL)) $from = 'no-reply@' . preg_replace('/[^a-z0-9.-]/i', '', (string)($_SERVER['SERVER_NAME'] ?? 'localhost'));
+        $site = str_replace(['"', '<', '>'], '', $oneLine(setting('site_name', 'TGISL Knowledge Hub')));
+        $title = $oneLine($title);
         $base = setting('base_url', '');
         foreach (all('SELECT email, name FROM users WHERE active = 1 AND id IN (' . in_list($userIds) . ')') as $r) {
             $msg = "Hello {$r['name']},\n\n$title\n" . ($body ? "\n$body\n" : '') . ($base && $link ? "\nOpen: " . rtrim($base, '/') . '/' . $link . "\n" : '') . "\n— $site";

@@ -43,6 +43,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
         ${c.approve ? `<button class="btn sm approve" data-a="approve">${icon('check', 'sm')}Approve</button><button class="btn sm" data-a="reject">Request changes</button>` : ''}
         ${c.cancel_request ? `<button class="btn sm ghost" data-a="withdraw">Withdraw</button>` : ''}</div>` : ''}
       ${d.status === 'rejected' && lastReject ? `<div class="alert red">${icon('alert')}<div class="grow"><b>${esc(lastReject.decider)} requested changes</b>${esc(lastReject.note)}</div>${c.upload_version ? `<button class="btn sm" data-a="version">Upload fix</button>` : ''}</div>` : ''}
+      ${!S.settings.approvals && d.status !== 'published' && c.publish_direct ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Not published yet</b>This version was saved before direct publishing was switched on, so only you and a few others can see it.</div><button class="btn sm primary" data-a="publish">${icon('check', 'sm')}Publish now</button></div>` : ''}
       ${d.status === 'draft' && c.submit ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Draft</b>Only you and approvers can see this version.</div><button class="btn sm primary" data-a="submit">${icon('send', 'sm')}Send for approval</button>${c.publish_direct ? `<button class="btn sm" data-a="approve">Publish now</button>` : ''}</div>` : ''}
       ${d.checked_out_by ? `<div class="alert amber">${icon('lock')}<div class="grow"><b>Checked out by ${d.checked_out_by === S.user.id ? 'you' : esc(d.checked_out_name)}</b>${d.checked_out_by === S.user.id ? 'Upload the new version to check it in automatically, or release it.' : 'You can read it, but new versions are blocked until it’s checked in.'}</div>
         ${d.checked_out_by === S.user.id || c.permissions ? `<button class="btn sm" data-a="checkin">Release</button>` : ''}</div>` : ''}
@@ -61,7 +62,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
           <div class="tabs" role="tablist">
             <button data-tab="comments" class="${tab === 'comments' ? 'on' : ''}">${icon('message', 'sm')}Comments <span class="n">${r.comments.length}</span></button>
             <button data-tab="versions" class="${tab === 'versions' ? 'on' : ''}">${icon('history', 'sm')}Versions <span class="n">${r.versions.length}</span></button>
-            <button data-tab="approvals" class="${tab === 'approvals' ? 'on' : ''}">${icon('stamp', 'sm')}Approvals</button>
+            ${S.settings.approvals ? `<button data-tab="approvals" class="${tab === 'approvals' ? 'on' : ''}">${icon('stamp', 'sm')}Approvals</button>` : ''}
             <button data-tab="activity" class="${tab === 'activity' ? 'on' : ''}">${icon('activity', 'sm')}Activity</button>
           </div>
           <div id="tabBody"></div>
@@ -139,7 +140,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
     const t = e.target;
     const tb = t.closest('[data-tab]'); if (tb) return drawTab(tb.dataset.tab);
     const dc = t.closest('[data-delc]'); if (dc) { e.preventDefault(); if (await confirmBox('Delete this comment?', { danger: true, ok: 'Delete' })) { await run(api('docs.comment_delete', { id: +dc.dataset.delc })); go(`#/doc/${id}?tab=comments`); } return; }
-    const rs = t.closest('[data-restore]'); if (rs) { if (await confirmBox('Restore this version as a new draft? The current version stays in history.', { ok: 'Restore' })) { await run(api('docs.restore_version', { id, version_id: +rs.dataset.restore }), (x) => x.message); navigate(); } return; }
+    const rs = t.closest('[data-restore]'); if (rs) { if (await confirmBox(S.settings.approvals ? 'Restore this version as a new draft? The current version stays in history.' : 'Publish this old version again as the newest version? Nothing is lost — the current version stays in history.', { ok: 'Restore' })) { await run(api('docs.restore_version', { id, version_id: +rs.dataset.restore }), (x) => x.message); navigate(); } return; }
     const at = t.closest('[data-addterm]'); if (at) { await run(api('docs.update', { id, add_term: +at.dataset.addterm }), 'Tag added.'); return navigate(); }
     const ul = t.closest('[data-unlink]'); if (ul) { e.preventDefault(); await run(api('docs.link', { id, related_id: +ul.dataset.unlink, remove: '1' }), 'Link removed.'); return navigate(); }
     const a = t.closest('[data-a]'); if (!a) return;
@@ -147,6 +148,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
     if (act === 'fav') { await api('docs.favorite', { id }); return navigate(); }
     if (act === 'version') return openUpload({ documentId: id, onDone: navigate });
     if (act === 'approve') { const note = await promptBox({ title: 'Approve and publish', label: 'Note for the author (optional)', textarea: true, required: false, ok: 'Approve & publish' }); if (note === null) return; await run(api('docs.approve', { id, note }), (x) => x.message); try { sessionStorage.setItem('km-pressed', String(id)); } catch (e) {} refreshCounts(); return navigate(); }
+    if (act === 'publish') { if (!await confirmBox('Publish this version? Everyone with access to the library will be able to read it, and it can’t be deleted afterwards.', { ok: 'Publish' })) return; await run(api('docs.approve', { id }), (x) => x.message); try { sessionStorage.setItem('km-pressed', String(id)); } catch (e) {} return navigate(); }
     if (act === 'reject') { const note = await promptBox({ title: 'Request changes', label: 'What should the author change?', textarea: true, ok: 'Send back' }); if (!note) return; await run(api('docs.reject', { id, note }), (x) => x.message); refreshCounts(); return navigate(); }
     if (act === 'submit') { const note = await promptBox({ title: 'Send for approval', label: 'Message for the approver (optional)', textarea: true, required: false, ok: 'Send for approval' }); if (note === null) return; await run(api('docs.submit', { id, note }), 'Sent for approval.'); return navigate(); }
     if (act === 'withdraw') { await run(api('docs.cancel_request', { id }), 'Request withdrawn.'); return navigate(); }

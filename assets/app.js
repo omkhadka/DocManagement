@@ -103,7 +103,7 @@ function avatar(name, cls = '') { let h = 0; for (const c of String(name)) h = (
 const LEVELS = { 0: 'No access', 1: 'Read', 2: 'Contribute', 3: 'Approve', 4: 'Full control' };
 const STATUS = { draft: 'Draft', pending: 'Pending approval', published: 'Published', rejected: 'Changes requested' };
 const statusTag = (s) => `<span class="status ${s}">${STATUS[s] || s}</span>`;
-const stamp = (s, sub = '', big = false) => `<span class="stamp ${s} ${big ? 'big' : ''}" data-sub="${esc(sub)}">${{ draft: 'DRAFT', pending: 'IN REVIEW', published: 'APPROVED', rejected: 'RETURNED' }[s] || s}</span>`;
+const stamp = (s, sub = '', big = false) => `<span class="stamp ${s} ${big ? 'big' : ''}" data-sub="${esc(sub)}">${{ draft: 'DRAFT', pending: 'IN REVIEW', published: S.settings.approvals ? 'APPROVED' : 'PUBLISHED', rejected: 'RETURNED' }[s] || s}</span>`;
 const CONF_HELP = {
   public: 'Public — anyone who can open this library can see it. Fine to share outside the company.',
   internal: 'Internal — anyone who can open this library can see it. Not for sharing outside TGISL.',
@@ -392,7 +392,7 @@ function renderShell() {
         <nav class="nav">
           <a href="#/" data-nav="/">${icon('home')}Home</a>
           <a href="#/search" data-nav="/search">${icon('search')}Search</a>
-          <a href="#/approvals" data-nav="/approvals">${icon('stamp')}Approvals<span class="count hot hidden" id="cApprovals"></span></a>
+          ${S.settings.approvals ? `<a href="#/approvals" data-nav="/approvals">${icon('stamp')}Approvals<span class="count hot hidden" id="cApprovals"></span></a>` : `<a href="#/my/new" data-nav="/my/new">${icon('clock')}New this week</a>`}
           <a href="#/my/favorites" data-nav="/my/favorites">${icon('star')}Favourites</a>
           <a href="#/my/mine" data-nav="/my/mine">${icon('file')}My documents</a>
           <a href="#/my/recent" data-nav="/my/recent">${icon('clock')}Recent</a>
@@ -506,7 +506,7 @@ function openPalette(initial = '') {
   const close = () => { back.remove(); document.removeEventListener('keydown', key, true); };
   const actions = [
     { label: 'Upload documents', ico: 'upload', run: () => openUpload({}) },
-    { label: 'Approvals waiting for me', ico: 'stamp', href: '#/approvals' },
+    S.settings.approvals ? { label: 'Approvals waiting for me', ico: 'stamp', href: '#/approvals' } : { label: 'New this week', ico: 'clock', href: '#/my/new' },
     { label: 'My favourites', ico: 'star', href: '#/my/favorites' },
     { label: 'Documents due for review', ico: 'clock', href: '#/my/review' },
     { label: 'My checked-out documents', ico: 'lock', href: '#/my/checked_out' },
@@ -614,13 +614,13 @@ const stampTilt = (seed) => (((Number(seed) || 7) * 37) % 11) - 5;   // −5…+
 let sealSeq = 0;
 
 /** Round company seal: "TGISL · DOCUMENT CONTROL" ring, APPROVED band, initials and date. */
-function seal({ date = '', by = '', seed = 1, size = 116, press = false } = {}) {
+function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 'APPROVED' } = {}) {
   ensureInkDefs();
   const id = 'sealring' + (++sealSeq);
   const dt = date ? parseDate(date) : null;
   const dateTxt = dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase() : '';
   const ini = initials(by);
-  return `<span class="seal ${press ? 'press' : ''}" style="--tilt:${stampTilt(seed)}deg" role="img" aria-label="Approved${by ? ' by ' + esc(by) : ''}${dateTxt ? ' on ' + esc(dateTxt) : ''}">
+  return `<span class="seal ${press ? 'press' : ''}" style="--tilt:${stampTilt(seed)}deg" role="img" aria-label="${word === 'APPROVED' ? 'Approved' : 'Published'}${by ? ' by ' + esc(by) : ''}${dateTxt ? ' on ' + esc(dateTxt) : ''}">
     <svg viewBox="0 0 120 120" width="${size}" height="${size}" aria-hidden="true">
       <g filter="url(#km-ink)" fill="none" stroke="currentColor">
         <circle cx="60" cy="60" r="56.5" stroke-width="3.2"/>
@@ -631,7 +631,7 @@ function seal({ date = '', by = '', seed = 1, size = 116, press = false } = {}) 
           <textPath href="#${id}" startOffset="0">TGISL ★ DOCUMENT CONTROL ★ KNOWLEDGE HUB ★</textPath></text>
         <rect x="9" y="49" width="102" height="22" fill="var(--surface)" stroke-width="2"/>
         <rect x="12" y="52" width="96" height="16" stroke-width=".8"/>
-        <text x="60" y="65" text-anchor="middle" fill="currentColor" stroke="none" font-size="13.5" font-weight="800" letter-spacing="2.2" font-family="Instrument Sans, sans-serif">APPROVED</text>
+        <text x="60" y="65" text-anchor="middle" fill="currentColor" stroke="none" font-size="${word.length > 8 ? 12.2 : 13.5}" font-weight="800" letter-spacing="${word.length > 8 ? 1.6 : 2.2}" font-family="Instrument Sans, sans-serif">${esc(word)}</text>
         <text x="60" y="42" text-anchor="middle" fill="currentColor" stroke="none" font-size="10" font-weight="700" letter-spacing="1" font-family="JetBrains Mono, monospace">${esc(ini || '—')}</text>
         <text x="60" y="84" text-anchor="middle" fill="currentColor" stroke="none" font-size="7.6" font-weight="700" letter-spacing=".6" font-family="JetBrains Mono, monospace">${esc(dateTxt)}</text>
       </g>
@@ -655,8 +655,7 @@ function rectStamp(kind, { sub = '', seed = 1, size = 150 } = {}) {
 
 /** The stamp for a document's state; approved documents get the seal. */
 function docStamp(d, approvals = [], opts = {}) {
-  const last = approvals.find((a) => a.decision === 'approved');
-  if (d.status === 'published') return seal({ date: last?.decided_at || d.modified, by: last?.decider || '', seed: d.id, ...opts });
+  if (d.status === 'published') return seal({ date: d.published_at || d.modified, by: d.published_by || '', seed: d.id, word: S.settings.approvals ? 'APPROVED' : 'PUBLISHED', ...opts });
   if (d.status === 'pending') return rectStamp('pending', { seed: d.id, size: opts.size ? opts.size * 1.25 : 150 });
   if (d.status === 'rejected') return rectStamp('rejected', { seed: d.id, size: opts.size ? opts.size * 1.25 : 150 });
   return rectStamp('draft', { seed: d.id, size: opts.size ? opts.size * 1.25 : 150 });
@@ -955,7 +954,7 @@ route('/lib/(\\d+)(?:/f/(\\d+))?', async (page, [libId, folderId], params) => {
     <div class="crumbs"><a href="#/">Home</a>${icon('right')}<a href="#/lib/${lib.id}">${esc(lib.name)}</a>${pathTo(folderId).map((f) => `${icon('right')}<a href="#/lib/${lib.id}/f/${f.id}">${esc(f.name)}</a>`).join('')}</div>
     <div class="page-head">
       <div class="grow"><h1>${esc(curFolder ? curFolder.name : lib.name)}</h1><p>${esc(curFolder ? 'Folder in ' + lib.name : lib.description || '')}
-        <span class="faint"> · Your access: ${LEVELS[folderLevel]}${+lib.approval_required ? ' · Publishing needs a department head’s approval' : ''}</span></p></div>
+        <span class="faint"> · Your access: ${LEVELS[folderLevel]}${S.settings.approvals && +lib.approval_required ? ' · Publishing needs a department head’s approval' : ''}</span></p></div>
       <div class="btn-row">
         ${folderLevel >= 2 ? `<button class="btn primary" id="bUpload">${icon('upload')}Upload</button><button class="btn" id="bFolder">${icon('folder-plus')}New folder</button>` : ''}
         ${folderLevel >= 4 ? `<button class="btn" id="bPerms">${icon('shield')}Permissions</button>` : ''}
@@ -1054,7 +1053,8 @@ route('/lib/(\\d+)(?:/f/(\\d+))?', async (page, [libId, folderId], params) => {
     const n = st.sel.size;
     $('#bulk').innerHTML = n ? `<div class="bulk"><b>${n} selected</b>
       <button class="btn sm" data-bulk="zip">${icon('download', 'sm')}Download</button>
-      ${canContribute() ? `<button class="btn sm" data-bulk="move">${icon('move', 'sm')}Move</button><button class="btn sm" data-bulk="delete">${icon('trash', 'sm')}Delete</button>` : ''}
+      ${canContribute() ? `<button class="btn sm" data-bulk="move">${icon('move', 'sm')}Move</button>` : ''}
+      ${S.user.is_admin || (canContribute() && (st.docs || []).some((x) => st.sel.has(x.id) && x.status !== 'published')) ? `<button class="btn sm" data-bulk="delete">${icon('trash', 'sm')}Delete</button>` : ''}
       <button class="btn sm" data-bulk="clear" style="margin-left:auto">Clear</button></div>` : '';
   };
 
@@ -1148,8 +1148,8 @@ route('/lib/(\\d+)(?:/f/(\\d+))?', async (page, [libId, folderId], params) => {
 });
 
 function titleBlock(d, approvals = [], opts = {}) {
-  const last = approvals.find((x) => x.decision === 'approved');
-  const statusTxt = { published: 'Approved for use', pending: 'Awaiting approval', rejected: 'Returned for changes', draft: 'Draft — not for use' }[d.status] || d.status;
+  const flow = S.settings.approvals;
+  const statusTxt = { published: flow ? 'Approved for use' : 'Published', pending: 'Awaiting approval', rejected: 'Returned for changes', draft: 'Draft — not for use' }[d.status] || d.status;
   return `<div class="titleblock">
     <div class="tb-num"><small>Document number</small><div class="v mono">${esc(d.doc_number || '—')}</div></div>
     <div class="tb-rev"><small>Rev</small>${revDelta(d.version, 'big')}</div>
@@ -1159,7 +1159,7 @@ function titleBlock(d, approvals = [], opts = {}) {
     <div><small>Author</small><div class="v">${esc(d.owner)}</div></div>
     <div><small>Date</small><div class="v">${esc(parseDate(d.modified)?.toLocaleDateString('en-GB') || '')}</div></div>
     <div class="nb"><small>Library</small><div class="v">${esc(d.library)}</div></div>
-    <div class="nb"><small>Approved by</small><div class="v">${esc(last?.decider || '—')}</div></div>
+    <div class="nb"><small>${flow ? 'Approved by' : 'Published by'}</small><div class="v">${esc(d.published_by || '—')}</div></div>
     <div class="nb nr"><small>Status</small><div class="v">${esc(statusTxt)}</div></div>
   </div>`;
 }
@@ -1277,9 +1277,9 @@ async function editLibrary(lib = null) {
         ${lib ? '' : '<span class="hint">This department gets Contribute access automatically.</span>'}</div>
       <div class="field"><label>Colour</label><input class="input" type="color" id="lColor" value="${esc(lib?.color || '#0F7C7A')}" style="padding:4px"></div>
       <div class="field"><label>Icon</label><select class="input" id="lIcon">${icons.map((i) => `<option ${lib?.icon === i ? 'selected' : ''}>${i}</option>`).join('')}</select></div>
-      <div class="field"><label>Who can approve?</label><select class="input" id="lMode"><option value="any_head">Any department head with read access</option><option value="owner_head" ${lib?.approval_mode === 'owner_head' ? 'selected' : ''}>Only heads of the owning department</option></select></div>
+      <div class="field" ${S.settings.approvals ? '' : 'hidden'}><label>Who can approve?</label><select class="input" id="lMode"><option value="any_head">Any department head with read access</option><option value="owner_head" ${lib?.approval_mode === 'owner_head' ? 'selected' : ''}>Only heads of the owning department</option></select></div>
     </div>
-    <label class="check"><input type="checkbox" id="lAppr" ${!lib || +lib.approval_required ? 'checked' : ''}><span><b>Require approval before publishing</b><br><span class="muted small">Uploads stay as drafts (visible to the author and approvers) until a department head approves them.</span></span></label>`,
+    <label class="check" ${S.settings.approvals ? '' : 'hidden'}><input type="checkbox" id="lAppr" ${!lib || +lib.approval_required ? 'checked' : ''}><span><b>Require approval before publishing</b><br><span class="muted small">Uploads stay as drafts (visible to the author and approvers) until a department head approves them.</span></span></label>`,
     foot: `${lib ? `<button class="btn danger left" data-del>${icon('trash', 'sm')}Delete library</button>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" data-ok>${lib ? 'Save changes' : 'Create library'}</button>` });
   m.$('[data-ok]').onclick = async () => {
     const r = await run(api('libraries.save', { id: lib?.id || 0, name: m.$('#lName').value, code: m.$('#lCode').value, description: m.$('#lDesc').value, department_id: +m.$('#lDept').value || 0,
@@ -1420,6 +1420,7 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
 
   const libObj = () => S.libs.find((l) => l.id === +lib) || {};
   const drawModes = () => {
+    if (!S.settings.approvals) { m.$('#uMode').closest('.field').hidden = true; m.$('#uMode').innerHTML = `<input type="radio" name="um" value="publish" checked hidden>`; return; }
     const needs = doc ? true : +libObj().approval_required !== 0;
     m.$('#uMode').innerHTML = needs ? `
       <label><input type="radio" name="um" value="submit" checked><b>Send for approval</b>A department head reviews it, then it’s published.</label>
@@ -1445,10 +1446,10 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
   const drawQueue = () => {
     m.$('#uQueue').innerHTML = queue.map((q, i) => {
       let st = fmtSize(q.file.size), cls = '';
-      if (q.state === 'done') { st = q.msg; cls = 'ok'; }
-      else if (q.state === 'error') { st = q.msg; cls = 'err'; }
+      if (q.state === 'done') { st = esc(q.msg); cls = 'ok'; }
+      else if (q.state === 'error') { st = esc(q.msg); cls = 'err'; }
       else if (q.state === 'uploading') st = 'Uploading… ' + Math.round(q.progress) + '%';
-      else if (q.existing) { st = `Same name exists — will become a new version of “${q.existing.title}” (now ${q.existing.version})${q.existing.locked ? ' · checked out' : ''}`; cls = 'v'; }
+      else if (q.existing) { st = `Same name exists — will become a new version of “${esc(q.existing.title)}” (now ${esc(q.existing.version)})${q.existing.locked ? ' · checked out' : ''}`; cls = 'v'; }
       return `<div class="uq-item">${fileIcon(q.file.name.split('.').pop(), 'sm')}<div style="min-width:0"><div class="nm">${esc(q.file.name)}</div><div class="st ${cls}">${st}</div>${q.state === 'uploading' ? `<div class="bar"><i style="width:${q.progress}%"></i></div>` : ''}</div>
         ${q.state ? (q.state === 'done' && q.id ? `<a class="btn sm" href="#/doc/${q.id}">Open</a>` : '') : `<button class="mini-btn" data-rmq="${i}" title="Remove">${icon('x', 'sm')}</button>`}</div>`;
     }).join('');
@@ -1602,6 +1603,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
         ${c.approve ? `<button class="btn sm approve" data-a="approve">${icon('check', 'sm')}Approve</button><button class="btn sm" data-a="reject">Request changes</button>` : ''}
         ${c.cancel_request ? `<button class="btn sm ghost" data-a="withdraw">Withdraw</button>` : ''}</div>` : ''}
       ${d.status === 'rejected' && lastReject ? `<div class="alert red">${icon('alert')}<div class="grow"><b>${esc(lastReject.decider)} requested changes</b>${esc(lastReject.note)}</div>${c.upload_version ? `<button class="btn sm" data-a="version">Upload fix</button>` : ''}</div>` : ''}
+      ${!S.settings.approvals && d.status !== 'published' && c.publish_direct ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Not published yet</b>This version was saved before direct publishing was switched on, so only you and a few others can see it.</div><button class="btn sm primary" data-a="publish">${icon('check', 'sm')}Publish now</button></div>` : ''}
       ${d.status === 'draft' && c.submit ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Draft</b>Only you and approvers can see this version.</div><button class="btn sm primary" data-a="submit">${icon('send', 'sm')}Send for approval</button>${c.publish_direct ? `<button class="btn sm" data-a="approve">Publish now</button>` : ''}</div>` : ''}
       ${d.checked_out_by ? `<div class="alert amber">${icon('lock')}<div class="grow"><b>Checked out by ${d.checked_out_by === S.user.id ? 'you' : esc(d.checked_out_name)}</b>${d.checked_out_by === S.user.id ? 'Upload the new version to check it in automatically, or release it.' : 'You can read it, but new versions are blocked until it’s checked in.'}</div>
         ${d.checked_out_by === S.user.id || c.permissions ? `<button class="btn sm" data-a="checkin">Release</button>` : ''}</div>` : ''}
@@ -1620,7 +1622,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
           <div class="tabs" role="tablist">
             <button data-tab="comments" class="${tab === 'comments' ? 'on' : ''}">${icon('message', 'sm')}Comments <span class="n">${r.comments.length}</span></button>
             <button data-tab="versions" class="${tab === 'versions' ? 'on' : ''}">${icon('history', 'sm')}Versions <span class="n">${r.versions.length}</span></button>
-            <button data-tab="approvals" class="${tab === 'approvals' ? 'on' : ''}">${icon('stamp', 'sm')}Approvals</button>
+            ${S.settings.approvals ? `<button data-tab="approvals" class="${tab === 'approvals' ? 'on' : ''}">${icon('stamp', 'sm')}Approvals</button>` : ''}
             <button data-tab="activity" class="${tab === 'activity' ? 'on' : ''}">${icon('activity', 'sm')}Activity</button>
           </div>
           <div id="tabBody"></div>
@@ -1698,7 +1700,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
     const t = e.target;
     const tb = t.closest('[data-tab]'); if (tb) return drawTab(tb.dataset.tab);
     const dc = t.closest('[data-delc]'); if (dc) { e.preventDefault(); if (await confirmBox('Delete this comment?', { danger: true, ok: 'Delete' })) { await run(api('docs.comment_delete', { id: +dc.dataset.delc })); go(`#/doc/${id}?tab=comments`); } return; }
-    const rs = t.closest('[data-restore]'); if (rs) { if (await confirmBox('Restore this version as a new draft? The current version stays in history.', { ok: 'Restore' })) { await run(api('docs.restore_version', { id, version_id: +rs.dataset.restore }), (x) => x.message); navigate(); } return; }
+    const rs = t.closest('[data-restore]'); if (rs) { if (await confirmBox(S.settings.approvals ? 'Restore this version as a new draft? The current version stays in history.' : 'Publish this old version again as the newest version? Nothing is lost — the current version stays in history.', { ok: 'Restore' })) { await run(api('docs.restore_version', { id, version_id: +rs.dataset.restore }), (x) => x.message); navigate(); } return; }
     const at = t.closest('[data-addterm]'); if (at) { await run(api('docs.update', { id, add_term: +at.dataset.addterm }), 'Tag added.'); return navigate(); }
     const ul = t.closest('[data-unlink]'); if (ul) { e.preventDefault(); await run(api('docs.link', { id, related_id: +ul.dataset.unlink, remove: '1' }), 'Link removed.'); return navigate(); }
     const a = t.closest('[data-a]'); if (!a) return;
@@ -1706,6 +1708,7 @@ route('/doc/(\\d+)', async (page, [id], params) => {
     if (act === 'fav') { await api('docs.favorite', { id }); return navigate(); }
     if (act === 'version') return openUpload({ documentId: id, onDone: navigate });
     if (act === 'approve') { const note = await promptBox({ title: 'Approve and publish', label: 'Note for the author (optional)', textarea: true, required: false, ok: 'Approve & publish' }); if (note === null) return; await run(api('docs.approve', { id, note }), (x) => x.message); try { sessionStorage.setItem('km-pressed', String(id)); } catch (e) {} refreshCounts(); return navigate(); }
+    if (act === 'publish') { if (!await confirmBox('Publish this version? Everyone with access to the library will be able to read it, and it can’t be deleted afterwards.', { ok: 'Publish' })) return; await run(api('docs.approve', { id }), (x) => x.message); try { sessionStorage.setItem('km-pressed', String(id)); } catch (e) {} return navigate(); }
     if (act === 'reject') { const note = await promptBox({ title: 'Request changes', label: 'What should the author change?', textarea: true, ok: 'Send back' }); if (!note) return; await run(api('docs.reject', { id, note }), (x) => x.message); refreshCounts(); return navigate(); }
     if (act === 'submit') { const note = await promptBox({ title: 'Send for approval', label: 'Message for the approver (optional)', textarea: true, required: false, ok: 'Send for approval' }); if (note === null) return; await run(api('docs.submit', { id, note }), 'Sent for approval.'); return navigate(); }
     if (act === 'withdraw') { await run(api('docs.cancel_request', { id }), 'Request withdrawn.'); return navigate(); }
@@ -1889,8 +1892,10 @@ route('/', async (page) => {
     <div class="hello"><div><h1>${greet}, ${esc(u.name.split(' ')[0])}</h1><p>${esc(S.settings.welcome_text || '')}</p></div>
       <div class="btn-row"><button class="btn primary" id="hUp">${icon('upload')}Upload documents</button><a class="btn" href="#/search">${icon('search')}Search</a></div></div>
     <div class="queue">
-      <a href="#/approvals" class="${r.pending ? 'attn' : ''}"><span class="n">${r.pending}</span><div><b>Waiting for your approval</b><span>${r.pending ? 'Review and publish' : 'Nothing to review'}</span></div></a>
-      <a href="#/my/mine"><span class="n">${r.myDrafts}</span><div><b>Your drafts & returns</b><span>Not yet published</span></div></a>
+      ${S.settings.approvals ? `<a href="#/approvals" class="${r.pending ? 'attn' : ''}"><span class="n">${r.pending}</span><div><b>Waiting for your approval</b><span>${r.pending ? 'Review and publish' : 'Nothing to review'}</span></div></a>
+      <a href="#/my/mine"><span class="n">${r.myDrafts}</span><div><b>Your drafts & returns</b><span>Not yet published</span></div></a>`
+      : `<a href="#/my/new"><span class="n">${r.newWeek}</span><div><b>New this week</b><span>Published in the last 7 days</span></div></a>
+      <a href="#/my/mine"><span class="n">${r.myCount}</span><div><b>Your documents</b><span>${r.myDrafts ? `${r.myDrafts} not yet published` : 'Everything you uploaded'}</span></div></a>`}
       <a href="#/my/review" class="${r.review.length ? 'attn' : ''}"><span class="n">${r.review.length}</span><div><b>Due for review</b><span>Overdue or due within 30 days</span></div></a>
       <a href="#/my/favorites" class="lime"><span class="n">${r.favs.length}</span><div><b>Favourites</b><span>Documents you follow</span></div></a>
     </div>
@@ -1923,7 +1928,8 @@ route('/', async (page) => {
 /* ================= Collections ================= */
 const COLLECTIONS = {
   favorites: ['Favourites', 'Documents you follow. You get a notification when a new version is published.', 'star'],
-  mine: ['My documents', 'Everything you have uploaded, including drafts and documents waiting for approval.', 'file'],
+  mine: ['My documents', 'Everything you have uploaded, including any unpublished drafts.', 'file'],
+  new: ['New this week', 'Documents published or updated with a new version in the last 7 days.', 'clock'],
   recent: ['Recent', 'Documents you viewed, downloaded or uploaded lately.', 'clock'],
   checked_out: ['Checked out to me', 'Documents you locked for editing. Upload a new version to check them in.', 'lock'],
   review: ['Due for review', 'Documents whose review date is past or within the next 30 days.', 'history'],
@@ -2011,6 +2017,7 @@ route('/search', async (page, _, params) => {
 /* ================= Approvals ================= */
 route('/approvals', async (page, _, params) => {
   setTitle('Approvals');
+  if (!S.settings.approvals) { page.innerHTML = emptyState('check', 'Approvals are switched off', 'Documents are published as soon as they’re uploaded. An administrator can switch approvals back on in Settings.'); return; }
   const tab = params.tab || 'queue';
   const r = await api('approvals.' + (tab === 'mine' ? 'mine' : tab === 'history' ? 'history' : 'queue'));
   const sel = new Set();
@@ -2265,7 +2272,7 @@ route('/admin/libraries', async (page) => {
   page.innerHTML = `${adminNav('libraries')}<div class="page-head"><div class="grow"><h1>Libraries & permissions</h1><p>Libraries are the top-level repositories. Permissions set on a library flow down to its folders and documents unless a folder or document is given its own.</p></div><button class="btn primary" id="lNew">${icon('plus', 'sm')}New library</button></div>
     <div class="table-wrap"><table class="list"><thead><tr><th>Library</th><th>Owner</th><th>Approval</th><th>Documents</th><th>Storage</th><th></th></tr></thead><tbody>
     ${r.libraries.map((l) => `<tr><td><span class="pill"><span class="sw" style="background:${esc(l.color)}"></span>${esc(l.name)}</span> <span class="mono faint small">${esc(l.code)}</span><div class="faint small">${esc(l.description || '')}</div></td>
-      <td>${esc(l.department || '—')}</td><td class="small">${+l.approval_required ? (l.approval_mode === 'owner_head' ? 'Owner dept. head' : 'Any dept. head') : '<span class="faint">Not required</span>'}</td><td>${l.count}</td><td>${fmtSize(l.size)}</td>
+      <td>${esc(l.department || '—')}</td><td class="small">${!S.settings.approvals ? '<span class="faint">Direct publish</span>' : +l.approval_required ? (l.approval_mode === 'owner_head' ? 'Owner dept. head' : 'Any dept. head') : '<span class="faint">Not required</span>'}</td><td>${l.count}</td><td>${fmtSize(l.size)}</td>
       <td class="nowrap"><button class="btn sm" data-perm="${l.id}">${icon('shield', 'sm')}Permissions</button> <button class="btn sm ghost" data-edit="${l.id}">${icon('settings', 'sm')}</button> <a class="btn sm ghost" href="#/lib/${l.id}">${icon('open', 'sm')}</a></td></tr>`).join('')}</tbody></table></div>
     <div class="panel" style="margin-top:22px"><div class="panel-h"><h3>Check someone’s access</h3></div><div class="panel-b"><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px">
       <select class="input" id="ckU">${dir.people.map((p) => `<option value="${p.id}">${esc(p.name)} — ${esc(p.department || roleName(p.role))}</option>`).join('')}</select>
@@ -2418,8 +2425,9 @@ route('/admin/analytics', async (page) => {
   page.innerHTML = `${adminNav('analytics')}<div class="page-head"><div class="grow"><h1>Analytics</h1><p>How the hub is used and where knowledge needs attention.</p></div></div>
     <div class="stat-row">
       <div class="stat"><b>${st.published || 0}</b><span>Published documents</span></div>
-      <div class="stat ${st.pending ? 'warn' : ''}"><b>${st.pending || 0}</b><span>Waiting for approval${r.stale ? ` · ${r.stale} over 3 days` : ''}</span></div>
-      <div class="stat"><b>${r.approvalTime ? Math.round(r.approvalTime) + ' h' : '—'}</b><span>Average time to approve</span></div>
+      ${S.settings.approvals ? `<div class="stat ${st.pending ? 'warn' : ''}"><b>${st.pending || 0}</b><span>Waiting for approval${r.stale ? ` · ${r.stale} over 3 days` : ''}</span></div>
+      <div class="stat"><b>${r.approvalTime ? Math.round(r.approvalTime) + ' h' : '—'}</b><span>Average time to approve</span></div>`
+      : `<div class="stat"><b>${(st.draft || 0) + (st.rejected || 0)}</b><span>Unpublished drafts</span></div>`}
       <div class="stat"><b>${r.active}</b><span>Active people (30 days)</span></div>
       <div class="stat"><b>${fmtSize(r.storage)}</b><span>Storage used</span></div>
       <div class="stat ${r.overdue ? 'warn' : ''}"><b>${r.overdue}</b><span>Reviews overdue</span></div>
@@ -2480,6 +2488,9 @@ route('/admin/settings', async (page) => {
         <div class="grid2"><div class="field"><label>Max upload (MB)</label><input class="input" type="number" data-k="max_upload_mb" value="${esc(s.max_upload_mb)}"><span class="hint">Server allows ${esc(sv.upload_max_filesize)} per file / ${esc(sv.post_max_size)} per request.</span></div>
         <div class="field"><label>Keep deleted items (days)</label><input class="input" type="number" data-k="recycle_days" value="${esc(s.recycle_days)}"></div></div>
         <div class="field"><label>Allowed file types</label><textarea class="input mono" data-k="allowed_ext" rows="3">${esc(s.allowed_ext)}</textarea></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>Publishing</h3></div><div class="panel-b" style="display:grid;gap:14px">
+        <label class="check"><input type="checkbox" data-k="approval_workflow" ${s.approval_workflow === '1' ? 'checked' : ''}><span><b>Require approval before documents are published</b><br><span class="small muted">Off: anyone with Contribute access publishes straight away. On: uploads wait for a department head (per library rule). Switching it off publishes everything still waiting.</span></span></label>
+        <p class="small muted" style="margin:0">Either way, published documents can’t be deleted by staff — only administrators can, through the recycle bin.</p></div></div>
       <div class="panel"><div class="panel-h"><h3>Two-step verification</h3><span class="faint small">${s.mfa_counts.on} of ${s.mfa_counts.people} people have it on</span></div><div class="panel-b" style="display:grid;gap:14px">
         <div class="field"><label>Who must use it</label><select class="input" data-k="mfa_policy">
           <option value="optional" ${s.mfa_policy === 'optional' ? 'selected' : ''}>Optional — each person decides on their profile</option>
@@ -2499,8 +2510,11 @@ route('/admin/settings', async (page) => {
   $('#sSave').onclick = async () => {
     const out = {};
     $$('[data-k]', page).forEach((el) => { out[el.dataset.k] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value; });
+    const flowChanged = (out.approval_workflow === '1') !== !!S.settings.approvals;
+    if (flowChanged && out.approval_workflow !== '1' && !await confirmBox('Switch off approvals? Every document still waiting for approval will be published now.', { ok: 'Switch off' })) return;
     await run(api('admin.settings_save', out), 'Settings saved.');
     Object.assign(S.settings, { site_name: out.site_name, org_name: out.org_name, welcome_text: out.welcome_text });
+    if (flowChanged) location.reload();
   };
 });
 /* Text recognition (OCR) in the browser: makes scanned / picture-only PDFs and images searchable.

@@ -7,6 +7,14 @@
 declare(strict_types=1);
 
 const EXTRACT_LIMIT = 400000; // characters kept per version
+const EXTRACT_MAX_PART = 40 * 1048576; // never unpack a single part bigger than this (guards against "zip bombs")
+
+/** Reads one entry of an Office/OpenDocument package, refusing oversized parts. */
+function zip_part(ZipArchive $z, string $name) {
+    $st = $z->statName($name);
+    if (!$st || $st['size'] > EXTRACT_MAX_PART) return false;
+    return $z->getFromName($name);
+}
 
 function extract_text(string $path, string $ext): string {
     $ext = strtolower($ext);
@@ -51,7 +59,7 @@ function ooxml_text(string $path, ?array $entries, string $paraTag, ?string $pat
     } else $names = $entries;
     $out = '';
     foreach ($names as $n) {
-        $xml = $z->getFromName($n);
+        $xml = zip_part($z, $n);
         if ($xml === false) continue;
         $xml = preg_replace('#</' . preg_quote($paraTag, '#') . '>#', "\n", $xml);
         $xml = preg_replace('#<(w:tab|w:br|a:br|text:tab|text:line-break)[^>]*/>#', ' ', $xml);
@@ -67,7 +75,7 @@ function xlsx_text(string $path): string {
     $z = new ZipArchive();
     if ($z->open($path) !== true) return '';
     $out = '';
-    $ss = $z->getFromName('xl/sharedStrings.xml');
+    $ss = zip_part($z, 'xl/sharedStrings.xml');
     if ($ss !== false) {
         $ss = preg_replace('#</si>#', "\n", $ss);
         $out .= html_entity_decode(strip_tags($ss), ENT_QUOTES | ENT_XML1, 'UTF-8');
@@ -75,7 +83,8 @@ function xlsx_text(string $path): string {
     for ($i = 0; $i < $z->numFiles && strlen($out) < EXTRACT_LIMIT; $i++) {
         $n = $z->getNameIndex($i);
         if (preg_match('#^xl/worksheets/sheet\d+\.xml$#', $n)) {
-            $x = $z->getFromName($n);
+            $x = zip_part($z, $n);
+            if ($x === false) continue;
             if (preg_match_all('#<is>(.*?)</is>|<v>([^<]*)</v>#s', $x, $m)) {
                 foreach ($m[0] as $k => $_) {
                     $v = $m[1][$k] !== '' ? strip_tags($m[1][$k]) : $m[2][$k];
@@ -101,8 +110,8 @@ function pdf_text(string $path): string {
         if (preg_match('#/Subtype\s*/Image#', $dict)) continue;
         $dec = $raw;
         if (strpos($dict, 'FlateDecode') !== false) {
-            $dec = @gzuncompress($raw);
-            if ($dec === false) $dec = @gzinflate(substr($raw, 2));
+            $dec = @gzuncompress($raw, EXTRACT_MAX_PART);
+            if ($dec === false) $dec = @gzinflate(substr($raw, 2), EXTRACT_MAX_PART);
             if ($dec === false) continue;
         }
         if (strpos($dec, 'BT') === false) continue;

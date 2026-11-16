@@ -50,6 +50,7 @@ function api_approvals_history() {
 /** Approve or reject many at once. */
 function api_approvals_bulk() {
     must_post();
+    if (!approvals_on()) fail('Approvals are switched off.');
     require_once KM_APP . '/api/docs.php';
     $ids = array_filter(array_map('intval', (array)arg('ids', [])));
     $decision = sarg('decision') === 'reject' ? 'reject' : 'approve';

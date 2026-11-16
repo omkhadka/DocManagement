@@ -20,6 +20,7 @@ if (!empty($_GET['zip'])) {
     if (!class_exists('ZipArchive')) deny('ZIP downloads need the PHP zip extension.', 500);
     $ids = array_slice(array_filter(array_map('intval', explode(',', (string)($_GET['ids'] ?? '')))), 0, 300);
     $tmp = tempnam(is_dir(storage_path('tmp')) ? storage_path('tmp') : sys_get_temp_dir(), 'zip');
+    register_shutdown_function(fn() => is_file($tmp) && @unlink($tmp));   // removed even if the download is cancelled
     $z = new ZipArchive();
     $z->open($tmp, ZipArchive::OVERWRITE);
     $used = []; $n = 0;

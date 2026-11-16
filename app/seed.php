@@ -13,7 +13,7 @@ function seed_defaults(int $adminId): void {
         'session_minutes' => '240',
         'email_notifications' => '0',
         'checkout_hours' => '72',
-        'db_version' => '3',
+        'db_version' => '4', 'approval_workflow' => '0',
         'mfa_policy' => 'optional',
         'mfa_remember_days' => '30',
         'welcome_text' => 'One place for every controlled document, drawing, procedure and lesson learned across the Mombasa LPG terminal.',
@@ -128,7 +128,7 @@ function seed_defaults(int $adminId): void {
         insert('folders', ['library_id' => $prc, 'name' => $f, 'created_by' => $adminId]);
 
     insert('announcements', ['title' => 'Welcome to the TGISL Knowledge Hub', 'pinned' => 1, 'created_by' => $adminId,
-        'body' => "Upload your documents into the right library. Each upload is versioned automatically, and a department head approves it before it becomes visible to everyone with read access."]);
+        'body' => "Upload your documents into the right library. Each upload is versioned automatically, and it is published straight away to everyone with read access."]);
 }
 
 /** Optional demo staff and documents so the platform can be evaluated immediately. */

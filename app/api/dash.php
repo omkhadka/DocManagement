@@ -20,7 +20,8 @@ function api_dash_home() {
     }
 
     require_once KM_APP . '/api/approvals.php';
-    $pending = count(approval_queue($u));
+    $pending = approvals_on() ? count(approval_queue($u)) : 0;
+    $newWeek = count(visible_doc_rows("d.published_version_id IN (SELECT id FROM document_versions WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))", [], 'd.updated_at DESC', 500));
 
     $libs = [];
     $ctx = perm_ctx($u);
@@ -55,7 +56,7 @@ function api_dash_home() {
         'people' => (int)val('SELECT COUNT(*) FROM users WHERE active=1'),
     ];
     $myDrafts = (int)val("SELECT COUNT(*) FROM documents WHERE owner_id=? AND deleted_at IS NULL AND status IN ('draft','rejected')", [$u['id']]);
-    return compact('recent', 'mine', 'favs', 'review', 'viewed', 'pending', 'libs', 'feed', 'ann', 'totals', 'myDrafts');
+    return compact('recent', 'mine', 'favs', 'review', 'viewed', 'pending', 'libs', 'feed', 'ann', 'totals', 'myDrafts', 'newWeek') + ['myCount' => (int)val('SELECT COUNT(*) FROM documents WHERE owner_id=? AND deleted_at IS NULL', [$u['id']])];
 }
 
 function api_dash_collection() {
@@ -65,6 +66,7 @@ function api_dash_collection() {
         case 'favorites': $docs = visible_doc_rows('d.id IN (SELECT document_id FROM favorites WHERE user_id = ?)', [$u['id']], 'd.title'); break;
         case 'mine': $docs = visible_doc_rows('d.owner_id = ?', [$u['id']], 'd.updated_at DESC', 1000); break;
         case 'checked_out': $docs = visible_doc_rows('d.checked_out_by = ?', [$u['id']]); break;
+        case 'new': $docs = visible_doc_rows("d.published_version_id IN (SELECT id FROM document_versions WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY))", [], 'd.updated_at DESC', 500); break;
         case 'review': $docs = visible_doc_rows('d.review_date IS NOT NULL AND d.review_date <= DATE_ADD(CURDATE(), INTERVAL 30 DAY)', [], 'd.review_date'); break;
         case 'recent':
             $ids = array_map('intval', array_column(all("SELECT object_id, MAX(id) mx FROM audit_log WHERE user_id=? AND action IN ('view','download','upload','new_version')

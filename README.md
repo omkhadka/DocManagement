@@ -1,4 +1,4 @@
-# TGISL Knowledge Hub — v1.3.2
+# TGISL Knowledge Hub — v1.4.0
 
 Document management and knowledge platform for Taifa Gas Investment SEZ Limited.
 PHP 7.4+ (8.1+ recommended) and MySQL / MariaDB — runs on standard cPanel hosting, no Node, Composer or shell access needed.
@@ -53,7 +53,7 @@ Open `https://km.arginternational.ae/install.php` and fill in:
 
 ## 1b. Updating an existing installation
 
-**v1.2.x / v1.3.x → v1.3.2:** back up, then upload `km-v1.3.2-part1-app.tar.gz` to the site folder → **Extract** (overwrite) → delete the archive → refresh the browser (Ctrl + F5). No database change. The OCR engine files (parts 2–4 of v1.2.0) are unchanged.
+**v1.2.x / v1.3.x → v1.4.0:** back up the database, then upload `km-v1.4.0-part1-app.tar.gz` to the site folder → **Extract** (overwrite) → delete the archive → refresh the browser (Ctrl + F5). The database upgrades itself on the first page load: approvals are switched off and anything still waiting for approval is published. The OCR engine files (parts 2–4 of v1.2.0) are unchanged. `.htaccess` now forces HTTPS.
 
 **Older (v1.0 → v1.1):**
 
@@ -78,7 +78,13 @@ Open `https://km.arginternational.ae/install.php` and fill in:
 **Read** · **Contribute** · **Approve** · **Full control** — granted to a person, a department, a group, a role, or everyone.
 Folders and documents inherit from their parent unless you untick *Inherit* to give them their own (e.g. a confidential folder). Admin → *Libraries & permissions* has a **Check someone's access** tool that explains exactly why a person can or can't see something.
 
-### Publishing workflow
+### Publishing (direct, from v1.4)
+- Anyone with **Contribute** access uploads → the document is **published at once** as version 1.0 and readers can see it. A new version (or restoring an old one) publishes straight away as 2.0, 3.0… — every earlier version stays in the history.
+- **Published documents can't be deleted** by staff — not by the author, not by department heads, not by people with Full control. Only an **administrator** can delete one (it goes to the recycle bin). Unpublished drafts can still be deleted by their author.
+- Older drafts saved before v1.4 show a **Publish now** button for their author.
+- The approval workflow below can be switched back on in **Settings → Publishing**. Switching it off again publishes everything still waiting.
+
+### Approval workflow (optional — off by default)
 1. Anyone with Contribute uploads → the document is a **draft** (version 0.1), visible only to the author and approvers.
 2. *Send for approval* → every eligible department head is notified.
 3. A head **approves** → the version becomes **1.0** and is visible to all readers; or **requests changes** with a note.
@@ -144,6 +150,7 @@ Libraries can switch approval off, and approvers can *Publish now* on their own 
 - **Moving server:** copy files + storage folder + database, then edit `app/config.php` (database details, `storage_path`).
 - **Locked-out user:** Admin → People → open the person → *Save* (unlocks) or *Reset password*.
 - **Front-end changes:** edit files in `assets/js/`, then rebuild `assets/app.js` by concatenating them in the order listed in `build.sh` (or run `sh build.sh` on any machine).
+- **Security:** sign-in locks for 15 minutes after 5 wrong passwords or codes; changing or resetting a password signs that person out everywhere else; check-outs lapse after the hours set in Settings; executable and web-page file types (php, html, js, exe…) can never be uploaded, whatever the allowed list says; HTTPS is forced.
 - **Errors:** PHP errors go to the server error log (cPanel → *Errors*). For temporary detail in API responses add `'debug' => true,` to `app/config.php` — remove it afterwards.
 
 ## 4. File map

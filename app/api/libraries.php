@@ -15,7 +15,7 @@ function api_libraries_list() {
         $out[] = ['id' => (int)$l['id'], 'name' => $l['name'], 'code' => $l['code'], 'description' => $l['description'], 'icon' => $l['icon'], 'color' => $l['color'],
             'department_id' => $l['department_id'] ? (int)$l['department_id'] : null, 'department' => $l['department'],
             'approval_required' => (int)$l['approval_required'], 'approval_mode' => $l['approval_mode'],
-            'level' => $lv, 'count' => max(0, ($counts[(int)$l['id']] ?? 0) - (hidden_counts($u)['lib'][(int)$l['id']] ?? 0)), 'size' => $sizes[(int)$l['id']] ?? 0];
+            'level' => $lv, 'count' => $lv < 1 ? 0 : max(0, ($counts[(int)$l['id']] ?? 0) - (hidden_counts($u)['lib'][(int)$l['id']] ?? 0)), 'size' => $lv < 1 ? 0 : ($sizes[(int)$l['id']] ?? 0)];
     }
     return ['libraries' => $out];
 }
@@ -99,6 +99,9 @@ function api_libraries_folder_save() {
         return ['id' => $id];
     }
     $lib = iarg('library_id'); $parent = iarg('parent_id') ?: null;
+    if (!val('SELECT id FROM libraries WHERE id=? AND deleted_at IS NULL', [$lib])) fail('Library not found.', 404);
+    // the parent folder must belong to the same library (otherwise access on one library could open a door into another)
+    if ($parent && !val('SELECT id FROM folders WHERE id=? AND library_id=? AND deleted_at IS NULL', [$parent, $lib])) fail('That folder is not in this library.');
     if (container_level($lib, $parent) < LVL_CONTRIBUTE) fail('You need Contribute access here to create folders.', 403);
     if (val('SELECT id FROM folders WHERE library_id=? AND ' . ($parent ? 'parent_id=?' : 'parent_id IS NULL') . ' AND name=? AND deleted_at IS NULL',
         $parent ? [$lib, $parent, $name] : [$lib, $name])) fail("A folder named \"$name\" already exists here.");

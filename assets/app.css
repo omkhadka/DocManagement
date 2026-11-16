@@ -710,3 +710,4 @@ table.docs .rev svg { width: 36px; height: 25px; }
 
 /* Home: annotated drawing */
 
+[hidden] { display: none !important; }

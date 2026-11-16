@@ -153,7 +153,7 @@ route('/admin/libraries', async (page) => {
   page.innerHTML = `${adminNav('libraries')}<div class="page-head"><div class="grow"><h1>Libraries & permissions</h1><p>Libraries are the top-level repositories. Permissions set on a library flow down to its folders and documents unless a folder or document is given its own.</p></div><button class="btn primary" id="lNew">${icon('plus', 'sm')}New library</button></div>
     <div class="table-wrap"><table class="list"><thead><tr><th>Library</th><th>Owner</th><th>Approval</th><th>Documents</th><th>Storage</th><th></th></tr></thead><tbody>
     ${r.libraries.map((l) => `<tr><td><span class="pill"><span class="sw" style="background:${esc(l.color)}"></span>${esc(l.name)}</span> <span class="mono faint small">${esc(l.code)}</span><div class="faint small">${esc(l.description || '')}</div></td>
-      <td>${esc(l.department || '—')}</td><td class="small">${+l.approval_required ? (l.approval_mode === 'owner_head' ? 'Owner dept. head' : 'Any dept. head') : '<span class="faint">Not required</span>'}</td><td>${l.count}</td><td>${fmtSize(l.size)}</td>
+      <td>${esc(l.department || '—')}</td><td class="small">${!S.settings.approvals ? '<span class="faint">Direct publish</span>' : +l.approval_required ? (l.approval_mode === 'owner_head' ? 'Owner dept. head' : 'Any dept. head') : '<span class="faint">Not required</span>'}</td><td>${l.count}</td><td>${fmtSize(l.size)}</td>
       <td class="nowrap"><button class="btn sm" data-perm="${l.id}">${icon('shield', 'sm')}Permissions</button> <button class="btn sm ghost" data-edit="${l.id}">${icon('settings', 'sm')}</button> <a class="btn sm ghost" href="#/lib/${l.id}">${icon('open', 'sm')}</a></td></tr>`).join('')}</tbody></table></div>
     <div class="panel" style="margin-top:22px"><div class="panel-h"><h3>Check someone’s access</h3></div><div class="panel-b"><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:10px">
       <select class="input" id="ckU">${dir.people.map((p) => `<option value="${p.id}">${esc(p.name)} — ${esc(p.department || roleName(p.role))}</option>`).join('')}</select>
@@ -306,8 +306,9 @@ route('/admin/analytics', async (page) => {
   page.innerHTML = `${adminNav('analytics')}<div class="page-head"><div class="grow"><h1>Analytics</h1><p>How the hub is used and where knowledge needs attention.</p></div></div>
     <div class="stat-row">
       <div class="stat"><b>${st.published || 0}</b><span>Published documents</span></div>
-      <div class="stat ${st.pending ? 'warn' : ''}"><b>${st.pending || 0}</b><span>Waiting for approval${r.stale ? ` · ${r.stale} over 3 days` : ''}</span></div>
-      <div class="stat"><b>${r.approvalTime ? Math.round(r.approvalTime) + ' h' : '—'}</b><span>Average time to approve</span></div>
+      ${S.settings.approvals ? `<div class="stat ${st.pending ? 'warn' : ''}"><b>${st.pending || 0}</b><span>Waiting for approval${r.stale ? ` · ${r.stale} over 3 days` : ''}</span></div>
+      <div class="stat"><b>${r.approvalTime ? Math.round(r.approvalTime) + ' h' : '—'}</b><span>Average time to approve</span></div>`
+      : `<div class="stat"><b>${(st.draft || 0) + (st.rejected || 0)}</b><span>Unpublished drafts</span></div>`}
       <div class="stat"><b>${r.active}</b><span>Active people (30 days)</span></div>
       <div class="stat"><b>${fmtSize(r.storage)}</b><span>Storage used</span></div>
       <div class="stat ${r.overdue ? 'warn' : ''}"><b>${r.overdue}</b><span>Reviews overdue</span></div>
@@ -368,6 +369,9 @@ route('/admin/settings', async (page) => {
         <div class="grid2"><div class="field"><label>Max upload (MB)</label><input class="input" type="number" data-k="max_upload_mb" value="${esc(s.max_upload_mb)}"><span class="hint">Server allows ${esc(sv.upload_max_filesize)} per file / ${esc(sv.post_max_size)} per request.</span></div>
         <div class="field"><label>Keep deleted items (days)</label><input class="input" type="number" data-k="recycle_days" value="${esc(s.recycle_days)}"></div></div>
         <div class="field"><label>Allowed file types</label><textarea class="input mono" data-k="allowed_ext" rows="3">${esc(s.allowed_ext)}</textarea></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>Publishing</h3></div><div class="panel-b" style="display:grid;gap:14px">
+        <label class="check"><input type="checkbox" data-k="approval_workflow" ${s.approval_workflow === '1' ? 'checked' : ''}><span><b>Require approval before documents are published</b><br><span class="small muted">Off: anyone with Contribute access publishes straight away. On: uploads wait for a department head (per library rule). Switching it off publishes everything still waiting.</span></span></label>
+        <p class="small muted" style="margin:0">Either way, published documents can’t be deleted by staff — only administrators can, through the recycle bin.</p></div></div>
       <div class="panel"><div class="panel-h"><h3>Two-step verification</h3><span class="faint small">${s.mfa_counts.on} of ${s.mfa_counts.people} people have it on</span></div><div class="panel-b" style="display:grid;gap:14px">
         <div class="field"><label>Who must use it</label><select class="input" data-k="mfa_policy">
           <option value="optional" ${s.mfa_policy === 'optional' ? 'selected' : ''}>Optional — each person decides on their profile</option>
@@ -387,7 +391,10 @@ route('/admin/settings', async (page) => {
   $('#sSave').onclick = async () => {
     const out = {};
     $$('[data-k]', page).forEach((el) => { out[el.dataset.k] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value; });
+    const flowChanged = (out.approval_workflow === '1') !== !!S.settings.approvals;
+    if (flowChanged && out.approval_workflow !== '1' && !await confirmBox('Switch off approvals? Every document still waiting for approval will be published now.', { ok: 'Switch off' })) return;
     await run(api('admin.settings_save', out), 'Settings saved.');
     Object.assign(S.settings, { site_name: out.site_name, org_name: out.org_name, welcome_text: out.welcome_text });
+    if (flowChanged) location.reload();
   };
 });

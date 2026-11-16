@@ -24,13 +24,13 @@ const stampTilt = (seed) => (((Number(seed) || 7) * 37) % 11) - 5;   // −5…+
 let sealSeq = 0;
 
 /** Round company seal: "TGISL · DOCUMENT CONTROL" ring, APPROVED band, initials and date. */
-function seal({ date = '', by = '', seed = 1, size = 116, press = false } = {}) {
+function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 'APPROVED' } = {}) {
   ensureInkDefs();
   const id = 'sealring' + (++sealSeq);
   const dt = date ? parseDate(date) : null;
   const dateTxt = dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).toUpperCase() : '';
   const ini = initials(by);
-  return `<span class="seal ${press ? 'press' : ''}" style="--tilt:${stampTilt(seed)}deg" role="img" aria-label="Approved${by ? ' by ' + esc(by) : ''}${dateTxt ? ' on ' + esc(dateTxt) : ''}">
+  return `<span class="seal ${press ? 'press' : ''}" style="--tilt:${stampTilt(seed)}deg" role="img" aria-label="${word === 'APPROVED' ? 'Approved' : 'Published'}${by ? ' by ' + esc(by) : ''}${dateTxt ? ' on ' + esc(dateTxt) : ''}">
     <svg viewBox="0 0 120 120" width="${size}" height="${size}" aria-hidden="true">
       <g filter="url(#km-ink)" fill="none" stroke="currentColor">
         <circle cx="60" cy="60" r="56.5" stroke-width="3.2"/>
@@ -41,7 +41,7 @@ function seal({ date = '', by = '', seed = 1, size = 116, press = false } = {}) 
           <textPath href="#${id}" startOffset="0">TGISL ★ DOCUMENT CONTROL ★ KNOWLEDGE HUB ★</textPath></text>
         <rect x="9" y="49" width="102" height="22" fill="var(--surface)" stroke-width="2"/>
         <rect x="12" y="52" width="96" height="16" stroke-width=".8"/>
-        <text x="60" y="65" text-anchor="middle" fill="currentColor" stroke="none" font-size="13.5" font-weight="800" letter-spacing="2.2" font-family="Instrument Sans, sans-serif">APPROVED</text>
+        <text x="60" y="65" text-anchor="middle" fill="currentColor" stroke="none" font-size="${word.length > 8 ? 12.2 : 13.5}" font-weight="800" letter-spacing="${word.length > 8 ? 1.6 : 2.2}" font-family="Instrument Sans, sans-serif">${esc(word)}</text>
         <text x="60" y="42" text-anchor="middle" fill="currentColor" stroke="none" font-size="10" font-weight="700" letter-spacing="1" font-family="JetBrains Mono, monospace">${esc(ini || '—')}</text>
         <text x="60" y="84" text-anchor="middle" fill="currentColor" stroke="none" font-size="7.6" font-weight="700" letter-spacing=".6" font-family="JetBrains Mono, monospace">${esc(dateTxt)}</text>
       </g>
@@ -65,8 +65,7 @@ function rectStamp(kind, { sub = '', seed = 1, size = 150 } = {}) {
 
 /** The stamp for a document's state; approved documents get the seal. */
 function docStamp(d, approvals = [], opts = {}) {
-  const last = approvals.find((a) => a.decision === 'approved');
-  if (d.status === 'published') return seal({ date: last?.decided_at || d.modified, by: last?.decider || '', seed: d.id, ...opts });
+  if (d.status === 'published') return seal({ date: d.published_at || d.modified, by: d.published_by || '', seed: d.id, word: S.settings.approvals ? 'APPROVED' : 'PUBLISHED', ...opts });
   if (d.status === 'pending') return rectStamp('pending', { seed: d.id, size: opts.size ? opts.size * 1.25 : 150 });
   if (d.status === 'rejected') return rectStamp('rejected', { seed: d.id, size: opts.size ? opts.size * 1.25 : 150 });
   return rectStamp('draft', { seed: d.id, size: opts.size ? opts.size * 1.25 : 150 });

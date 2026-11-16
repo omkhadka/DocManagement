@@ -24,7 +24,9 @@ function api_admin_audit() {
         $out = fopen('php://output', 'w');
         fwrite($out, "\xEF\xBB\xBF");
         fputcsv($out, ['Time', 'Person', 'Action', 'Object type', 'Object ID', 'Object', 'Details', 'IP']);
-        foreach ($rows as $r) fputcsv($out, [$r['created_at'], $r['user_name'], $r['action'], $r['object_type'], $r['object_id'], $r['object_name'], $r['details'], $r['ip']]);
+        // cells that start with = + - @ are neutralised so a spreadsheet never runs them as formulas
+        $cell = fn($v) => is_string($v) && $v !== '' && strpbrk($v[0], "=+-@\t\r") !== false ? "'" . $v : $v;
+        foreach ($rows as $r) fputcsv($out, array_map($cell, [$r['created_at'], $r['user_name'], $r['action'], $r['object_type'], $r['object_id'], $r['object_name'], $r['details'], $r['ip']]));
         fclose($out);
         audit('audit_export', 'system', null, 'CSV export');
         exit;
@@ -35,7 +37,7 @@ function api_admin_audit() {
 }
 
 const SETTING_KEYS = ['site_name', 'org_name', 'welcome_text', 'number_pattern', 'max_upload_mb', 'allowed_ext', 'recycle_days', 'session_minutes',
-    'email_notifications', 'mail_from', 'base_url', 'checkout_hours', 'mfa_policy', 'mfa_remember_days'];
+    'email_notifications', 'mail_from', 'base_url', 'checkout_hours', 'mfa_policy', 'mfa_remember_days', 'approval_workflow'];
 
 function api_admin_settings() {
     require_admin();
@@ -56,8 +58,16 @@ function api_admin_settings_save() {
         if (!array_key_exists($k, $in)) continue;
         $v = is_scalar($in[$k]) ? trim((string)$in[$k]) : '';
         if (in_array($k, ['max_upload_mb', 'recycle_days', 'session_minutes', 'checkout_hours'], true)) $v = (string)max(1, (int)$v);
-        if ($k === 'allowed_ext') $v = implode(',', array_filter(array_map(fn($e) => preg_replace('/[^a-z0-9]/', '', strtolower(trim($e))), explode(',', $v))));
+        if ($k === 'allowed_ext') $v = implode(',', array_diff(array_filter(array_map(fn($e) => preg_replace('/[^a-z0-9]/', '', strtolower(trim($e))), explode(',', $v))), BLOCKED_EXT));
         if ($k === 'email_notifications') $v = $v ? '1' : '0';
+        if ($k === 'approval_workflow') {
+            $v = $v ? '1' : '0';
+            if ($v !== setting('approval_workflow', '0')) {
+                audit('approval_workflow', 'system', null, $v === '1' ? 'Approval workflow switched on' : 'Approval workflow switched off');
+                set_setting($k, $v);
+                if ($v === '0') km_publish_pending((int)me()['id']);
+            }
+        }
         if ($k === 'mfa_remember_days') $v = (string)max(0, min(365, (int)$in[$k]));
         if ($k === 'mfa_policy') {
             if (!in_array($v, ['optional', 'privileged', 'all'], true)) continue;

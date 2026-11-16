@@ -10,7 +10,7 @@ function api_notifications_list() {
 function api_notifications_count() {
     $u = me();
     require_once KM_APP . '/api/approvals.php';
-    return ['unread' => (int)val('SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0', [$u['id']]), 'approvals' => count(approval_queue($u))];
+    return ['unread' => (int)val('SELECT COUNT(*) FROM notifications WHERE user_id=? AND is_read=0', [$u['id']]), 'approvals' => approvals_on() ? count(approval_queue($u)) : 0];
 }
 function api_notifications_read() {
     must_post();

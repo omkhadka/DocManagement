@@ -127,6 +127,7 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
 
   const libObj = () => S.libs.find((l) => l.id === +lib) || {};
   const drawModes = () => {
+    if (!S.settings.approvals) { m.$('#uMode').closest('.field').hidden = true; m.$('#uMode').innerHTML = `<input type="radio" name="um" value="publish" checked hidden>`; return; }
     const needs = doc ? true : +libObj().approval_required !== 0;
     m.$('#uMode').innerHTML = needs ? `
       <label><input type="radio" name="um" value="submit" checked><b>Send for approval</b>A department head reviews it, then it’s published.</label>
@@ -152,10 +153,10 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
   const drawQueue = () => {
     m.$('#uQueue').innerHTML = queue.map((q, i) => {
       let st = fmtSize(q.file.size), cls = '';
-      if (q.state === 'done') { st = q.msg; cls = 'ok'; }
-      else if (q.state === 'error') { st = q.msg; cls = 'err'; }
+      if (q.state === 'done') { st = esc(q.msg); cls = 'ok'; }
+      else if (q.state === 'error') { st = esc(q.msg); cls = 'err'; }
       else if (q.state === 'uploading') st = 'Uploading… ' + Math.round(q.progress) + '%';
-      else if (q.existing) { st = `Same name exists — will become a new version of “${q.existing.title}” (now ${q.existing.version})${q.existing.locked ? ' · checked out' : ''}`; cls = 'v'; }
+      else if (q.existing) { st = `Same name exists — will become a new version of “${esc(q.existing.title)}” (now ${esc(q.existing.version)})${q.existing.locked ? ' · checked out' : ''}`; cls = 'v'; }
       return `<div class="uq-item">${fileIcon(q.file.name.split('.').pop(), 'sm')}<div style="min-width:0"><div class="nm">${esc(q.file.name)}</div><div class="st ${cls}">${st}</div>${q.state === 'uploading' ? `<div class="bar"><i style="width:${q.progress}%"></i></div>` : ''}</div>
         ${q.state ? (q.state === 'done' && q.id ? `<a class="btn sm" href="#/doc/${q.id}">Open</a>` : '') : `<button class="mini-btn" data-rmq="${i}" title="Remove">${icon('x', 'sm')}</button>`}</div>`;
     }).join('');

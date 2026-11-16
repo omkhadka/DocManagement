@@ -205,12 +205,20 @@ function api_docs_get() {
     if (!$lastView || strtotime((string)$lastView) < time() - 600) audit('view', 'document', (int)$d['id']);
 
     $isOwner = (int)$d['owner_id'] === $u['id'];
+    $flow = approvals_on();
+    // who published the version readers see, and when (the approver when the workflow is on; otherwise the person who uploaded it)
+    $pub = $d['published_version_id'] ? one('SELECT v.created_at, u.name FROM document_versions v LEFT JOIN users u ON u.id=v.uploaded_by WHERE v.id=?', [$d['published_version_id']]) : null;
+    $lastOk = null; foreach ($approvals as $a) if ($a['decision'] === 'approved' && $a['decider']) { $lastOk = $a; break; }
+    $doc['published_by'] = $flow && $lastOk ? $lastOk['decider'] : ($pub['name'] ?? '');
+    $doc['published_at'] = $flow && $lastOk ? $lastOk['decided_at'] : ($pub['created_at'] ?? null);
     $doc['can'] = [
         'edit' => $lv >= LVL_CONTRIBUTE, 'upload_version' => $lv >= LVL_CONTRIBUTE && (!$d['checked_out_by'] || (int)$d['checked_out_by'] === $u['id'] || $lv >= LVL_FULL),
-        'approve' => $canApprove && $d['status'] === 'pending', 'submit' => ($isOwner || $lv >= LVL_CONTRIBUTE) && in_array($d['status'], ['draft', 'rejected'], true) && (int)$lib['approval_required'] === 1,
-        'publish_direct' => $canApprove && $d['status'] !== 'published', 'delete' => ($isOwner && $lv >= LVL_CONTRIBUTE) || $lv >= LVL_FULL,
+        'approve' => $flow && $canApprove && $d['status'] === 'pending',
+        'submit' => $flow && ($isOwner || $lv >= LVL_CONTRIBUTE) && in_array($d['status'], ['draft', 'rejected'], true) && (int)$lib['approval_required'] === 1,
+        'publish_direct' => $d['status'] !== 'published' && ($flow ? $canApprove : ($isOwner || $lv >= LVL_FULL)),
+        'delete' => can_delete_doc($d, $u, $lv),
         'permissions' => $lv >= LVL_FULL, 'checkout' => $lv >= LVL_CONTRIBUTE, 'restore_version' => $lv >= LVL_CONTRIBUTE, 'move' => ($isOwner && $lv >= LVL_CONTRIBUTE) || $lv >= LVL_FULL,
-        'cancel_request' => $d['status'] === 'pending' && ($isOwner || $lv >= LVL_FULL),
+        'cancel_request' => $flow && $d['status'] === 'pending' && ($isOwner || $lv >= LVL_FULL),
         'review' => $isOwner || $lv >= LVL_APPROVE || $canApprove,
         'classify' => $isOwner || $lv >= LVL_FULL || $canApprove,
     ];
@@ -289,6 +297,7 @@ function publish_version(array $d, int $verId, string $note = ''): string {
         if ($months) $upd['review_date'] = date('Y-m-d', strtotime("+$months months"));
     }
     update('documents', $upd, 'id=?', [$d['id']]);
+    reindex_doc((int)$d['id']);   // search follows the published version
     return "$maxMajor.0";
 }
 
@@ -313,7 +322,8 @@ function api_docs_upload() {
         $existing = one('SELECT ' . DOC_COLS . ' FROM documents d JOIN document_versions v ON v.id=d.current_version_id
             WHERE d.library_id=? AND ' . ($folderId ? 'd.folder_id=?' : 'd.folder_id IS NULL') . ' AND d.deleted_at IS NULL AND LOWER(v.filename)=LOWER(?) LIMIT 1',
             $folderId ? [$libId, $folderId, $origName] : [$libId, $origName]);
-        if ($existing && sarg('as_new') !== '1') { $d = $existing; $autoVersion = true; }
+        // only become a new version of a document this person can see and edit; otherwise it is a separate document
+        if ($existing && sarg('as_new') !== '1' && visible_version($existing, $u) && doc_level($existing, $u) >= LVL_CONTRIBUTE) { $d = $existing; $autoVersion = true; }
     }
     $lv = $d ? doc_level($d, $u) : container_level($libId, $folderId, $u);
     if ($lv < LVL_CONTRIBUTE) fail("You don't have permission to upload here. Ask an administrator for Contribute access.", 403);
@@ -367,10 +377,11 @@ function api_docs_upload() {
     $label = ver_label($major, $minor);
     $status = 'draft';
     $canApprove = can_approve_doc($d, $u);
-    if (!(int)$lib['approval_required'] || ($mode === 'publish' && $canApprove)) {
+    $needsApproval = approvals_on() && (int)$lib['approval_required'];
+    if (!$needsApproval || ($mode === 'publish' && $canApprove)) {
         $label = publish_version($d, $verId);
         $status = 'published';
-        if ((int)$lib['approval_required']) insert('approvals', ['document_id' => $docId, 'version_id' => $verId, 'requested_by' => $u['id'], 'decision' => 'approved',
+        if ($needsApproval) insert('approvals', ['document_id' => $docId, 'version_id' => $verId, 'requested_by' => $u['id'], 'decision' => 'approved',
             'decided_by' => $u['id'], 'decided_at' => now(), 'note' => 'Published directly by approver']);
         audit('publish', 'document', $docId, "Version $label");
         notify_followers($d, 'New version published: ' . $d['title'], "Version $label is now available.");
@@ -446,6 +457,7 @@ function api_docs_update() {
 
 function api_docs_submit() {
     must_post();
+    if (!approvals_on()) fail('Approvals are switched off — use Publish instead.');
     $u = me();
     $d = load_doc(iarg('id'));
     if (doc_level($d, $u) < LVL_CONTRIBUTE && (int)$d['owner_id'] !== $u['id']) fail("You can't submit this document.", 403);
@@ -459,6 +471,18 @@ function decide(string $decision) {
     must_post();
     $u = me();
     $d = load_doc(iarg('id'));
+    if (!approvals_on()) {   // no approval step: the author or a contributor publishes a draft themselves
+        if ($decision !== 'approve') fail('Approvals are switched off.');
+        if ($d['status'] === 'published') fail('This document is already published.');
+        if ((int)$d['owner_id'] !== $u['id'] && doc_level($d, $u) < LVL_FULL) fail('Only the author (or someone with Full control) can publish this draft.', 403);
+        db()->beginTransaction();
+        q("UPDATE approvals SET decision='cancelled' WHERE document_id=? AND decision='pending'", [$d['id']]);
+        $label = publish_version($d, (int)$d['current_version_id']);
+        audit('publish', 'document', (int)$d['id'], "Version $label");
+        notify_followers($d, 'New version published: ' . $d['title'], "Version $label is now available.");
+        db()->commit();
+        return ['message' => "Published as version $label."];
+    }
     if (!can_approve_doc($d, $u)) fail('Only a department head (or someone with Approve permission) can approve this document.', 403);
     $note = sarg('note', '', 1000);
     if ($decision === 'reject' && $note === '') fail('Add a short note so the author knows what to change.');
@@ -535,6 +559,11 @@ function api_docs_restore_version() {
     update('documents', ['current_version_id' => $new, 'status' => 'draft', 'updated_at' => now()], 'id=?', [$d['id']]);
     reindex_doc((int)$d['id']);
     audit('restore_version', 'document', (int)$d['id'], 'From ' . ver_label($v['major'], $v['minor']));
+    if (!approvals_on()) {
+        $label = publish_version(load_doc((int)$d['id']), $new);
+        audit('publish', 'document', (int)$d['id'], "Version $label");
+        return ['message' => "Restored and published as version $label."];
+    }
     return ['message' => 'Restored as a new draft version. Submit it for approval to publish.'];
 }
 
@@ -555,19 +584,21 @@ function api_docs_delete() {
     must_post();
     $u = me();
     $ids = array_filter(array_map('intval', (array)arg('ids', [iarg('id')])));
-    $done = 0;
+    $done = 0; $locked = 0;
     foreach ($ids as $id) {
         $d = one('SELECT ' . DOC_COLS . ' FROM documents d WHERE d.id=? AND d.deleted_at IS NULL', [$id]);
         if (!$d) continue;
         $lv = doc_level($d, $u);
-        if (!(((int)$d['owner_id'] === $u['id'] && $lv >= LVL_CONTRIBUTE) || $lv >= LVL_FULL)) continue;
+        if (!can_delete_doc($d, $u, $lv)) { if ($d['published_version_id']) $locked++; continue; }
         if ($d['checked_out_by'] && (int)$d['checked_out_by'] !== $u['id'] && $lv < LVL_FULL) continue;
         update('documents', ['deleted_at' => now(), 'deleted_by' => $u['id']], 'id=?', [$id]);
         audit('delete', 'document', $id, $d['title']);
         $done++;
     }
-    if (!$done) fail("You can't delete the selected document(s). Only the author or someone with Full control can.", 403);
-    return ['deleted' => $done, 'message' => $done === 1 ? 'Moved to the recycle bin.' : "$done documents moved to the recycle bin."];
+    if (!$done) fail($locked ? 'Published documents can’t be deleted — they stay as a permanent record. Upload a new version instead, or ask an administrator.'
+        : "You can't delete the selected document(s). Only the author of an unpublished draft can.", 403);
+    return ['deleted' => $done, 'message' => ($done === 1 ? 'Moved to the recycle bin.' : "$done documents moved to the recycle bin.")
+        . ($locked ? " $locked published document(s) were kept — published documents can’t be deleted." : '')];
 }
 
 function api_docs_recycle() {
@@ -710,7 +741,13 @@ function api_docs_check_names() {
         WHERE d.library_id=? AND " . ($folder ? 'd.folder_id=?' : 'd.folder_id IS NULL') . " AND d.deleted_at IS NULL AND LOWER(v.filename) IN ($in)",
         array_merge($folder ? [$lib, $folder] : [$lib], $names));
     $out = [];
-    foreach ($rows as $r) $out[$r['fn']] = ['id' => (int)$r['id'], 'title' => $r['title'], 'version' => ver_label($r['major'], $r['minor']), 'locked' => (bool)$r['checked_out_by']];
+    $u = me();
+    foreach ($rows as $r) {
+        // only documents this person may update are reported (never reveal hidden titles)
+        $d = load_doc((int)$r['id']);
+        if (!visible_version($d, $u) || doc_level($d, $u) < LVL_CONTRIBUTE) continue;
+        $out[$r['fn']] = ['id' => (int)$r['id'], 'title' => $r['title'], 'version' => ver_label($r['major'], $r['minor']), 'locked' => (bool)$r['checked_out_by']];
+    }
     return ['existing' => $out];
 }
 
@@ -748,7 +785,7 @@ function api_docs_ocr_save() {
     if ($v['text_source'] === 'native' || ($v['text_source'] === '' && !ocr_needed(version_path($v), (string)$v['ext'], (string)$v['extracted_text']))) {
         return ['message' => 'This version already has searchable text.', 'skipped' => true];
     }
-    $text = clean_text((string)arg('text', ''));
+    $text = clean_text(mb_substr((string)arg('text', ''), 0, EXTRACT_LIMIT * 2));
     $pages = max(1, min(5000, iarg('pages', 1)));
     $conf = max(0, min(100, iarg('confidence', 0)));
     $ran = max(0, iarg('ocr_pages_run', $pages));           // pages that actually needed recognition

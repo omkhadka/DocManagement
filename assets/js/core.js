@@ -103,7 +103,7 @@ function avatar(name, cls = '') { let h = 0; for (const c of String(name)) h = (
 const LEVELS = { 0: 'No access', 1: 'Read', 2: 'Contribute', 3: 'Approve', 4: 'Full control' };
 const STATUS = { draft: 'Draft', pending: 'Pending approval', published: 'Published', rejected: 'Changes requested' };
 const statusTag = (s) => `<span class="status ${s}">${STATUS[s] || s}</span>`;
-const stamp = (s, sub = '', big = false) => `<span class="stamp ${s} ${big ? 'big' : ''}" data-sub="${esc(sub)}">${{ draft: 'DRAFT', pending: 'IN REVIEW', published: 'APPROVED', rejected: 'RETURNED' }[s] || s}</span>`;
+const stamp = (s, sub = '', big = false) => `<span class="stamp ${s} ${big ? 'big' : ''}" data-sub="${esc(sub)}">${{ draft: 'DRAFT', pending: 'IN REVIEW', published: S.settings.approvals ? 'APPROVED' : 'PUBLISHED', rejected: 'RETURNED' }[s] || s}</span>`;
 const CONF_HELP = {
   public: 'Public — anyone who can open this library can see it. Fine to share outside the company.',
   internal: 'Internal — anyone who can open this library can see it. Not for sharing outside TGISL.',

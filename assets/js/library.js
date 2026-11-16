@@ -66,7 +66,7 @@ route('/lib/(\\d+)(?:/f/(\\d+))?', async (page, [libId, folderId], params) => {
     <div class="crumbs"><a href="#/">Home</a>${icon('right')}<a href="#/lib/${lib.id}">${esc(lib.name)}</a>${pathTo(folderId).map((f) => `${icon('right')}<a href="#/lib/${lib.id}/f/${f.id}">${esc(f.name)}</a>`).join('')}</div>
     <div class="page-head">
       <div class="grow"><h1>${esc(curFolder ? curFolder.name : lib.name)}</h1><p>${esc(curFolder ? 'Folder in ' + lib.name : lib.description || '')}
-        <span class="faint"> · Your access: ${LEVELS[folderLevel]}${+lib.approval_required ? ' · Publishing needs a department head’s approval' : ''}</span></p></div>
+        <span class="faint"> · Your access: ${LEVELS[folderLevel]}${S.settings.approvals && +lib.approval_required ? ' · Publishing needs a department head’s approval' : ''}</span></p></div>
       <div class="btn-row">
         ${folderLevel >= 2 ? `<button class="btn primary" id="bUpload">${icon('upload')}Upload</button><button class="btn" id="bFolder">${icon('folder-plus')}New folder</button>` : ''}
         ${folderLevel >= 4 ? `<button class="btn" id="bPerms">${icon('shield')}Permissions</button>` : ''}
@@ -165,7 +165,8 @@ route('/lib/(\\d+)(?:/f/(\\d+))?', async (page, [libId, folderId], params) => {
     const n = st.sel.size;
     $('#bulk').innerHTML = n ? `<div class="bulk"><b>${n} selected</b>
       <button class="btn sm" data-bulk="zip">${icon('download', 'sm')}Download</button>
-      ${canContribute() ? `<button class="btn sm" data-bulk="move">${icon('move', 'sm')}Move</button><button class="btn sm" data-bulk="delete">${icon('trash', 'sm')}Delete</button>` : ''}
+      ${canContribute() ? `<button class="btn sm" data-bulk="move">${icon('move', 'sm')}Move</button>` : ''}
+      ${S.user.is_admin || (canContribute() && (st.docs || []).some((x) => st.sel.has(x.id) && x.status !== 'published')) ? `<button class="btn sm" data-bulk="delete">${icon('trash', 'sm')}Delete</button>` : ''}
       <button class="btn sm" data-bulk="clear" style="margin-left:auto">Clear</button></div>` : '';
   };
 
@@ -259,8 +260,8 @@ route('/lib/(\\d+)(?:/f/(\\d+))?', async (page, [libId, folderId], params) => {
 });
 
 function titleBlock(d, approvals = [], opts = {}) {
-  const last = approvals.find((x) => x.decision === 'approved');
-  const statusTxt = { published: 'Approved for use', pending: 'Awaiting approval', rejected: 'Returned for changes', draft: 'Draft — not for use' }[d.status] || d.status;
+  const flow = S.settings.approvals;
+  const statusTxt = { published: flow ? 'Approved for use' : 'Published', pending: 'Awaiting approval', rejected: 'Returned for changes', draft: 'Draft — not for use' }[d.status] || d.status;
   return `<div class="titleblock">
     <div class="tb-num"><small>Document number</small><div class="v mono">${esc(d.doc_number || '—')}</div></div>
     <div class="tb-rev"><small>Rev</small>${revDelta(d.version, 'big')}</div>
@@ -270,7 +271,7 @@ function titleBlock(d, approvals = [], opts = {}) {
     <div><small>Author</small><div class="v">${esc(d.owner)}</div></div>
     <div><small>Date</small><div class="v">${esc(parseDate(d.modified)?.toLocaleDateString('en-GB') || '')}</div></div>
     <div class="nb"><small>Library</small><div class="v">${esc(d.library)}</div></div>
-    <div class="nb"><small>Approved by</small><div class="v">${esc(last?.decider || '—')}</div></div>
+    <div class="nb"><small>${flow ? 'Approved by' : 'Published by'}</small><div class="v">${esc(d.published_by || '—')}</div></div>
     <div class="nb nr"><small>Status</small><div class="v">${esc(statusTxt)}</div></div>
   </div>`;
 }
@@ -388,9 +389,9 @@ async function editLibrary(lib = null) {
         ${lib ? '' : '<span class="hint">This department gets Contribute access automatically.</span>'}</div>
       <div class="field"><label>Colour</label><input class="input" type="color" id="lColor" value="${esc(lib?.color || '#0F7C7A')}" style="padding:4px"></div>
       <div class="field"><label>Icon</label><select class="input" id="lIcon">${icons.map((i) => `<option ${lib?.icon === i ? 'selected' : ''}>${i}</option>`).join('')}</select></div>
-      <div class="field"><label>Who can approve?</label><select class="input" id="lMode"><option value="any_head">Any department head with read access</option><option value="owner_head" ${lib?.approval_mode === 'owner_head' ? 'selected' : ''}>Only heads of the owning department</option></select></div>
+      <div class="field" ${S.settings.approvals ? '' : 'hidden'}><label>Who can approve?</label><select class="input" id="lMode"><option value="any_head">Any department head with read access</option><option value="owner_head" ${lib?.approval_mode === 'owner_head' ? 'selected' : ''}>Only heads of the owning department</option></select></div>
     </div>
-    <label class="check"><input type="checkbox" id="lAppr" ${!lib || +lib.approval_required ? 'checked' : ''}><span><b>Require approval before publishing</b><br><span class="muted small">Uploads stay as drafts (visible to the author and approvers) until a department head approves them.</span></span></label>`,
+    <label class="check" ${S.settings.approvals ? '' : 'hidden'}><input type="checkbox" id="lAppr" ${!lib || +lib.approval_required ? 'checked' : ''}><span><b>Require approval before publishing</b><br><span class="muted small">Uploads stay as drafts (visible to the author and approvers) until a department head approves them.</span></span></label>`,
     foot: `${lib ? `<button class="btn danger left" data-del>${icon('trash', 'sm')}Delete library</button>` : ''}<button class="btn" data-close>Cancel</button><button class="btn primary" data-ok>${lib ? 'Save changes' : 'Create library'}</button>` });
   m.$('[data-ok]').onclick = async () => {
     const r = await run(api('libraries.save', { id: lib?.id || 0, name: m.$('#lName').value, code: m.$('#lCode').value, description: m.$('#lDesc').value, department_id: +m.$('#lDept').value || 0,

@@ -83,7 +83,7 @@ function renderShell() {
         <nav class="nav">
           <a href="#/" data-nav="/">${icon('home')}Home</a>
           <a href="#/search" data-nav="/search">${icon('search')}Search</a>
-          <a href="#/approvals" data-nav="/approvals">${icon('stamp')}Approvals<span class="count hot hidden" id="cApprovals"></span></a>
+          ${S.settings.approvals ? `<a href="#/approvals" data-nav="/approvals">${icon('stamp')}Approvals<span class="count hot hidden" id="cApprovals"></span></a>` : `<a href="#/my/new" data-nav="/my/new">${icon('clock')}New this week</a>`}
           <a href="#/my/favorites" data-nav="/my/favorites">${icon('star')}Favourites</a>
           <a href="#/my/mine" data-nav="/my/mine">${icon('file')}My documents</a>
           <a href="#/my/recent" data-nav="/my/recent">${icon('clock')}Recent</a>
@@ -197,7 +197,7 @@ function openPalette(initial = '') {
   const close = () => { back.remove(); document.removeEventListener('keydown', key, true); };
   const actions = [
     { label: 'Upload documents', ico: 'upload', run: () => openUpload({}) },
-    { label: 'Approvals waiting for me', ico: 'stamp', href: '#/approvals' },
+    S.settings.approvals ? { label: 'Approvals waiting for me', ico: 'stamp', href: '#/approvals' } : { label: 'New this week', ico: 'clock', href: '#/my/new' },
     { label: 'My favourites', ico: 'star', href: '#/my/favorites' },
     { label: 'Documents due for review', ico: 'clock', href: '#/my/review' },
     { label: 'My checked-out documents', ico: 'lock', href: '#/my/checked_out' },
