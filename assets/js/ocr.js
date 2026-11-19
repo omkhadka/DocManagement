@@ -26,7 +26,7 @@ async function ocrWorker() {
     langPath: absUrl('assets/ocr/lang'),
     gzip: false,
     workerBlobURL: false,
-    logger: (m) => { if (OCRQ.running && m.status === 'recognizing text') OCRQ.running.pageProgress = m.progress; notifyOcr(); },
+    logger: (m) => { const j = OCRQ.current || OCRQ.running; if (j && m.status === 'recognizing text') j.pageProgress = m.progress; notifyOcr(); },
   });
   // Automatic page layout (3). The library default (6, "one block of text") can skip rows in tables.
   await OCRQ.worker.setParameters({ tessedit_pageseg_mode: '3', preserve_interword_spaces: '1' });
@@ -53,11 +53,12 @@ async function imageToCanvas(blob, maxSide = 3600) {
 
 /**
  * Reads the text of a file. PDFs: pages that already contain real text keep it; picture-only pages are recognised.
- * Returns { text, pages, ranPages, confidence }.
+ * Returns { text, pages, ranPages, confidence, partial }. maxPages: stop after that many pages (a quick look for Toto).
  */
-async function recogniseFile(blob, ext, job) {
+async function recogniseFile(blob, ext, job, { maxPages = 0 } = {}) {
   ext = String(ext).toLowerCase();
   const worker = await ocrWorker();
+  OCRQ.current = job;
   if (ext !== 'pdf') {
     job.pages = 1; job.page = 1; notifyOcr();
     const { data } = await worker.recognize(await imageToCanvas(blob));
@@ -65,9 +66,11 @@ async function recogniseFile(blob, ext, job) {
   }
   const lib = await pdfLib();
   const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
-  job.pages = pdf.numPages; notifyOcr();
+  const last = maxPages ? Math.min(maxPages, pdf.numPages) : pdf.numPages;
+  job.pages = last; notifyOcr();
   const parts = []; let ran = 0, confSum = 0;
-  for (let n = 1; n <= pdf.numPages; n++) {
+  for (let n = 1; n <= last; n++) {
+    if (job.cancelled) break;
     job.page = n; job.pageProgress = 0; notifyOcr();
     const page = await pdf.getPage(n);
     const tc = await page.getTextContent();
@@ -84,8 +87,9 @@ async function recogniseFile(blob, ext, job) {
     ran++; confSum += data.confidence || 0;
     c.width = c.height = 0; page.cleanup();
   }
+  const total = pdf.numPages || job.pages;
   pdf.destroy();
-  return { text: parts.join('\n\n'), pages: pdf.numPages || job.pages, ranPages: ran, confidence: ran ? Math.round(confSum / ran) : 100 };
+  return { text: parts.join('\n\n'), pages: total, ranPages: ran, confidence: ran ? Math.round(confSum / ran) : 100, partial: last < total || !!job.cancelled };
 }
 
 /* ---------- Background queue ---------- */
@@ -103,7 +107,7 @@ function ocrJobFor(versionId) { return OCRQ.running?.versionId === versionId ? O
 async function runOcrQueue() {
   while (OCRQ.jobs.length) {
     const job = OCRQ.jobs.shift();
-    OCRQ.running = job; job.state = 'running'; notifyOcr();
+    OCRQ.running = job; OCRQ.current = null; job.state = 'running'; notifyOcr();
     try {
       let blob = job.file;
       if (!blob) {

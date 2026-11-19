@@ -106,7 +106,7 @@ const statusTag = (s) => `<span class="status ${s}">${STATUS[s] || s}</span>`;
 const stamp = (s, sub = '', big = false) => `<span class="stamp ${s} ${big ? 'big' : ''}" data-sub="${esc(sub)}">${{ draft: 'DRAFT', pending: 'IN REVIEW', published: S.settings.approvals ? 'APPROVED' : 'PUBLISHED', rejected: 'RETURNED' }[s] || s}</span>`;
 const CONF_HELP = {
   public: 'Public — anyone who can open this library can see it. Fine to share outside the company.',
-  internal: 'Internal — anyone who can open this library can see it. Not for sharing outside TGISL.',
+  internal: 'Internal — anyone who can open this library can see it. Not for sharing outside the organisation.',
   confidential: 'Confidential — only the author, the library’s owning department, approvers, contributors and people you name can see it. Others won’t find it in lists or search.',
   restricted: 'Restricted — only you, administrators and people you name under Permissions can see it. Use for salaries, legal and board matters.',
 };
@@ -117,12 +117,12 @@ function watermark(c) {
 }
 const conf = (c) => `<span class="conf ${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</span>`;
 function highlight(text, words) {
-  let out = esc(text);
-  (words || []).filter((w) => w && w.length > 1).forEach((w) => {
-    const re = new RegExp('(' + esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-    out = out.replace(re, '<mark>$1</mark>');
-  });
-  return out;
+  // one pass over the original text: matches and the text between them are escaped separately,
+  // so inserted <mark> tags and HTML entities are never matched again
+  const ws = [...new Set((words || []).filter((w) => w && w.length > 1))].sort((a, b) => b.length - a.length);
+  if (!ws.length) return esc(text);
+  const re = new RegExp('(' + ws.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+  return String(text ?? '').split(re).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join('');
 }
 
 /* ---------------- Icons ---------------- */
@@ -191,6 +191,11 @@ const ICONS = {
   file: '<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/>',
   move: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M9 14h6M13 11.5l2.5 2.5-2.5 2.5"/>',
   send: '<path d="M21 3 3 10.5l7 3 3 7z"/><path d="m10 13.5 4-4"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  volume: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+  mute: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="m17 9 5 6M22 9l-5 6"/>',
+  graph: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="18" r="2.5"/><circle cx="19" cy="17" r="1.8"/><path d="M8.2 7.2 10.8 16M15.6 7.6 13 15.8M8.4 5.8l7.2.9M14.4 18l2.9-.6"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   open: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   chart2: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -214,6 +219,11 @@ function toast(msg, type = '', ms = 4200) {
   $('#toasts').appendChild(t);
   setTimeout(() => t.remove(), ms);
 }
+
+/** Toto, the built-in document assistant: its small badge, used wherever a suggestion came from it. */
+const TOTO = 'Toto';
+function totoMark(cls = '') { return `<span class="toto-mark ${cls}" title="Suggested by Toto, the built-in assistant">${icon('sparkle', 'sm')}</span>`; }
+function totoTag(text = 'Toto') { return `<span class="toto-tag" title="Filled in by Toto — check it">${icon('sparkle', 'sm')}${esc(text)}</span>`; }
 
 function modal({ title, body = '', foot = '', size = '', onClose, locked = false }) {
   const back = document.createElement('div');

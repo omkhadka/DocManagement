@@ -135,7 +135,7 @@ function showRecoveryCodes(host, codes, { onContinue, first = false } = {}) {
   $('#dlCodes', host).onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-    a.download = 'TGISL-KM-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove();
+    a.download = 'KM-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
   $('#cpCodes', host).onclick = () => navigator.clipboard?.writeText(text).then(() => toast('Recovery codes copied.'));

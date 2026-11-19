@@ -106,7 +106,7 @@ const statusTag = (s) => `<span class="status ${s}">${STATUS[s] || s}</span>`;
 const stamp = (s, sub = '', big = false) => `<span class="stamp ${s} ${big ? 'big' : ''}" data-sub="${esc(sub)}">${{ draft: 'DRAFT', pending: 'IN REVIEW', published: S.settings.approvals ? 'APPROVED' : 'PUBLISHED', rejected: 'RETURNED' }[s] || s}</span>`;
 const CONF_HELP = {
   public: 'Public — anyone who can open this library can see it. Fine to share outside the company.',
-  internal: 'Internal — anyone who can open this library can see it. Not for sharing outside TGISL.',
+  internal: 'Internal — anyone who can open this library can see it. Not for sharing outside the organisation.',
   confidential: 'Confidential — only the author, the library’s owning department, approvers, contributors and people you name can see it. Others won’t find it in lists or search.',
   restricted: 'Restricted — only you, administrators and people you name under Permissions can see it. Use for salaries, legal and board matters.',
 };
@@ -117,12 +117,12 @@ function watermark(c) {
 }
 const conf = (c) => `<span class="conf ${c}">${c.charAt(0).toUpperCase() + c.slice(1)}</span>`;
 function highlight(text, words) {
-  let out = esc(text);
-  (words || []).filter((w) => w && w.length > 1).forEach((w) => {
-    const re = new RegExp('(' + esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
-    out = out.replace(re, '<mark>$1</mark>');
-  });
-  return out;
+  // one pass over the original text: matches and the text between them are escaped separately,
+  // so inserted <mark> tags and HTML entities are never matched again
+  const ws = [...new Set((words || []).filter((w) => w && w.length > 1))].sort((a, b) => b.length - a.length);
+  if (!ws.length) return esc(text);
+  const re = new RegExp('(' + ws.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+  return String(text ?? '').split(re).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join('');
 }
 
 /* ---------------- Icons ---------------- */
@@ -191,6 +191,11 @@ const ICONS = {
   file: '<path d="M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z"/><path d="M14 3v5h5"/>',
   move: '<path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2.5h8.5A1.5 1.5 0 0 1 21 9v9.5a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 18.5z"/><path d="M9 14h6M13 11.5l2.5 2.5-2.5 2.5"/>',
   send: '<path d="M21 3 3 10.5l7 3 3 7z"/><path d="m10 13.5 4-4"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/>',
+  volume: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/>',
+  mute: '<path d="M4 9h4l5-4v14l-5-4H4z"/><path d="m17 9 5 6M22 9l-5 6"/>',
+  graph: '<circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="7" r="2.5"/><circle cx="12" cy="18" r="2.5"/><circle cx="19" cy="17" r="1.8"/><path d="M8.2 7.2 10.8 16M15.6 7.6 13 15.8M8.4 5.8l7.2.9M14.4 18l2.9-.6"/>',
+  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
   open: '<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
   undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>',
   chart2: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
@@ -214,6 +219,11 @@ function toast(msg, type = '', ms = 4200) {
   $('#toasts').appendChild(t);
   setTimeout(() => t.remove(), ms);
 }
+
+/** Toto, the built-in document assistant: its small badge, used wherever a suggestion came from it. */
+const TOTO = 'Toto';
+function totoMark(cls = '') { return `<span class="toto-mark ${cls}" title="Suggested by Toto, the built-in assistant">${icon('sparkle', 'sm')}</span>`; }
+function totoTag(text = 'Toto') { return `<span class="toto-tag" title="Filled in by Toto — check it">${icon('sparkle', 'sm')}${esc(text)}</span>`; }
 
 function modal({ title, body = '', foot = '', size = '', onClose, locked = false }) {
   const back = document.createElement('div');
@@ -334,7 +344,7 @@ function renderLogin(message) {
   app().innerHTML = `<main class="login">
     <section class="login-art">
       <div class="login-brand"><span class="mark logo"><img src="assets/brand/mark.png" alt=""></span>${esc(S.settings.org_name || 'Taifa Gas Investment SEZ Limited')}</div>
-      <p class="login-quote">${esc(S.settings.site_name || 'TGISL Knowledge Hub')}<small>${esc(S.settings.welcome_text || '')}</small></p>
+      <p class="login-quote">${esc(S.settings.site_name || 'KM Platform')}<small>${esc(S.settings.welcome_text || '')}</small></p>
       ${PLANT_SVG}
     </section>
     <section class="login-form">
@@ -391,12 +401,13 @@ function renderShell() {
       <div class="side-scroll">
         <nav class="nav">
           <a href="#/" data-nav="/">${icon('home')}Home</a>
-          <a href="#/search" data-nav="/search">${icon('search')}Search</a>
+          ${S.settings.ai ? `<a href="#/ask" data-nav="/ask">${icon('search')}Search · ask Toto</a>` : `<a href="#/search" data-nav="/search">${icon('search')}Search</a>`}
           ${S.settings.approvals ? `<a href="#/approvals" data-nav="/approvals">${icon('stamp')}Approvals<span class="count hot hidden" id="cApprovals"></span></a>` : `<a href="#/my/new" data-nav="/my/new">${icon('clock')}New this week</a>`}
           <a href="#/my/favorites" data-nav="/my/favorites">${icon('star')}Favourites</a>
           <a href="#/my/mine" data-nav="/my/mine">${icon('file')}My documents</a>
           <a href="#/my/recent" data-nav="/my/recent">${icon('clock')}Recent</a>
           <a href="#/people" data-nav="/people">${icon('users')}People</a>
+          <a href="#/map" data-nav="/map">${icon('graph')}Knowledge map</a>
         </nav>
         <div class="nav-label">Libraries ${u.is_admin ? `<button title="New library" data-act="new-lib">${icon('plus', 'sm')}</button>` : ''}</div>
         <nav class="nav" id="sideLibs"></nav>
@@ -440,7 +451,7 @@ function renderShell() {
     if (act === 'upload') openUpload({});
     if (act === 'new-lib') editLibrary();
     if (act === 'theme') { localStorageSet('km-theme', isDark() ? 'light' : 'dark'); applyTheme(); a.innerHTML = icon(isDark() ? 'sun' : 'moon'); }
-    if (act === 'logout') { await api('auth.logout', {}).catch(() => {}); location.hash = ''; S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); }
+    if (act === 'logout') { totoForget(); await api('auth.logout', {}).catch(() => {}); location.hash = ''; S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); }
   });
   shell.addEventListener('click', (e) => { if (e.target === shell && shell.classList.contains('nav-open')) shell.classList.remove('nav-open'); });
 }
@@ -524,6 +535,7 @@ function openPalette(initial = '') {
     const r = await api('search.suggest', undefined, { query: { q } });
     if (input.value.trim() !== q) return;
     items = [{ group: '', html: `${icon('search')}<span class="t">Search everything for “${esc(q)}”</span><small>Enter</small>`, href: '#/search?q=' + encodeURIComponent(q) }];
+    if (S.settings.ai) items.push({ group: '', html: `${totoMark()}<span class="t">Ask Toto: “${esc(q)}”</span>`, href: '#/ask?q=' + encodeURIComponent(q) });
     r.docs.forEach((d, i) => items.push({ group: i === 0 ? 'Documents' : '', html: `${fileIcon(d.ext, 'sm')}<span class="t">${esc(d.title)}</span><small class="mono">${esc(d.doc_number || '')}</small>`, href: '#/doc/' + d.id }));
     r.terms.forEach((t, i) => items.push({ group: i === 0 ? 'Tags' : '', html: `${icon('tag')}<span class="t">${esc(t.label)}</span><small>${esc(t.termset)}</small>`, href: '#/search?terms=' + t.id }));
     r.libraries.forEach((l, i) => items.push({ group: i === 0 ? 'Libraries' : '', html: `<span class="swatch" style="width:10px;height:10px;border-radius:3px;background:${esc(l.color)};margin:0 4px"></span><span class="t">${esc(l.name)}</span>`, href: '#/lib/' + l.id }));
@@ -572,7 +584,7 @@ function forcePasswordChange() {
   };
   m.$('[data-ok]').onclick = save;
   m.$('#cp3').addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
-  m.$('[data-out]').onclick = async () => { await api('auth.logout', {}).catch(() => {}); m.close(); S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); };
+  m.$('[data-out]').onclick = async () => { totoForget(); await api('auth.logout', {}).catch(() => {}); m.close(); S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); };
 }
 
 /* ---------- Boot ---------- */
@@ -613,7 +625,10 @@ function ensureInkDefs() {
 const stampTilt = (seed) => (((Number(seed) || 7) * 37) % 11) - 5;   // −5…+5°, the same every time for a document
 let sealSeq = 0;
 
-/** Round company seal: "TGISL · DOCUMENT CONTROL" ring, APPROVED band, initials and date. */
+/** The seal's ring text: the platform name and DOCUMENT CONTROL. */
+function sealRing() { return String(S.settings.site_name || 'KM Platform').toUpperCase().replace(/\s+/g, ' ').trim().slice(0, 24) + ' ★ DOCUMENT CONTROL ★ '; }
+
+/** Round company seal: "<platform> · DOCUMENT CONTROL" ring, APPROVED band, initials and date. */
 function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 'APPROVED' } = {}) {
   ensureInkDefs();
   const id = 'sealring' + (++sealSeq);
@@ -628,7 +643,7 @@ function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 
         <circle cx="60" cy="60" r="38" stroke-width="1.4"/>
         <path id="${id}" d="M60,60 m-44.5,0 a44.5,44.5 0 1,1 89,0 a44.5,44.5 0 1,1 -89,0" stroke="none"/>
         <text fill="currentColor" stroke="none" font-size="8.4" font-weight="700" letter-spacing="1.35" font-family="Instrument Sans, sans-serif">
-          <textPath href="#${id}" startOffset="0">TGISL ★ DOCUMENT CONTROL ★ KNOWLEDGE HUB ★</textPath></text>
+          <textPath href="#${id}" startOffset="0" textLength="274" lengthAdjust="spacing">${esc(sealRing())}</textPath></text>
         <rect x="9" y="49" width="102" height="22" fill="var(--surface)" stroke-width="2"/>
         <rect x="12" y="52" width="96" height="16" stroke-width=".8"/>
         <text x="60" y="65" text-anchor="middle" fill="currentColor" stroke="none" font-size="${word.length > 8 ? 12.2 : 13.5}" font-weight="800" letter-spacing="${word.length > 8 ? 1.6 : 2.2}" font-family="Instrument Sans, sans-serif">${esc(word)}</text>
@@ -642,7 +657,7 @@ function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 
 function rectStamp(kind, { sub = '', seed = 1, size = 150 } = {}) {
   ensureInkDefs();
   const t = { draft: ['DRAFT', 'NOT FOR USE'], pending: ['IN REVIEW', sub || 'AWAITING APPROVAL'], rejected: ['RETURNED', 'FOR CHANGES'],
-    confidential: ['CONFIDENTIAL', 'TGISL'], restricted: ['RESTRICTED', 'NAMED ACCESS ONLY'] }[kind] || [String(kind).toUpperCase(), sub];
+    confidential: ['CONFIDENTIAL', 'DO NOT SHARE'], restricted: ['RESTRICTED', 'NAMED ACCESS ONLY'] }[kind] || [String(kind).toUpperCase(), sub];
   const dash = kind === 'draft' ? 'stroke-dasharray="5 3"' : '';
   return `<span class="rstamp ${kind}" style="--tilt:${stampTilt(seed) * 0.8}deg" role="img" aria-label="${esc(t[0])}">
     <svg viewBox="0 0 160 58" width="${size}" height="${size * 58 / 160}" aria-hidden="true"><g filter="url(#km-ink)" fill="none" stroke="currentColor">
@@ -811,7 +826,7 @@ function showRecoveryCodes(host, codes, { onContinue, first = false } = {}) {
   $('#dlCodes', host).onclick = () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-    a.download = 'TGISL-KM-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove();
+    a.download = 'KM-recovery-codes.txt'; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
   };
   $('#cpCodes', host).onclick = () => navigator.clipboard?.writeText(text).then(() => toast('Recovery codes copied.'));
@@ -1385,6 +1400,9 @@ function renderFieldInputs(host, fields, values = {}) {
 }
 
 /* ---------------- Upload dialog ---------------- */
+const CONF_RANK = { public: 0, internal: 1, confidential: 2, restricted: 3 };
+const CONF_NAME = { public: 'Public', internal: 'Internal', confidential: 'Confidential', restricted: 'Restricted' };
+
 async function openUpload({ libraryId = null, folderId = null, documentId = null, files = [], onDone } = {}) {
   await Promise.all([loadTax(), loadDir(), loadLibs()]);
   const writable = S.libs.filter((l) => l.level >= 2);
@@ -1392,33 +1410,41 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
   if (documentId) doc = (await api('docs.get', undefined, { query: { id: documentId } })).doc;
   if (!documentId && !writable.length && !libraryId) return toast("You don't have upload access to any library yet. Ask an administrator.", 'err');
   const canPublish = S.user.is_admin || S.user.is_head;
+  const toto = !doc && !!S.settings.ai;     // Toto reads new uploads before they are published
   const queue = [];
   let lib = libraryId || writable[0]?.id, folder = folderId || null;
   let props = null;
+  let ctTouched = false, finished = false;
+  const tagSel = new Set();                 // general tags (terms with no matching property on the content type)
+  let sensChoice = null;                    // single file: 'raise' | 'keep' once the person decided on Toto's warning
 
-  const m = modal({ title: doc ? 'Upload a new version' : 'Upload documents', size: 'wide', body: `
+  const m = modal({ title: doc ? 'Upload a new version' : 'Upload documents', size: 'wide', onClose: () => { queue.forEach((q) => { if (q.scan) q.scan.cancelled = true; }); if (!finished) unstage(queue.filter((q) => q.token && q.state !== 'done')); }, body: `
     ${doc ? `<div class="alert teal">${fileIcon(doc.ext, 'sm')}<div class="grow"><b>${esc(doc.title)}</b><span class="mono small">${esc(doc.doc_number || '')} · current version ${esc(doc.version)}</span></div></div>` : `
     <div class="grid2"><div class="field"><label>Library</label><select class="input" id="uLib">${writable.map((l) => `<option value="${l.id}" ${l.id === lib ? 'selected' : ''}>${esc(l.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Folder</label><select class="input" id="uFolder"><option value="">Library root</option></select></div></div>`}
     <div class="drop" id="uDrop" tabindex="0" role="button">${icon('upload')}<b>${doc ? 'Choose the updated file' : 'Drop files here or choose files'}</b><span class="small">${esc((S.settings.allowed_ext || []).slice(0, 12).join(', ').toUpperCase())}… up to ${Math.min(S.settings.max_upload_mb, S.settings.server_upload_mb || 9999)} MB each</span>
       <input type="file" id="uFile" ${doc ? '' : 'multiple'} hidden></div>
     <div class="uq" id="uQueue"></div>
+    <div id="uToto"></div>
     <div id="uSuggest"></div>
     ${doc ? `<div class="field"><label>What changed in this version?</label><input class="input" id="uComment" placeholder="e.g. Updated hold time after client comments"></div>` : `
-    <div id="uSingle" class="field hidden"><label>Title</label><input class="input" id="uTitle" placeholder="Defaults to the file name"></div>
+    <div id="uSingle" class="hidden" style="display:grid;gap:14px"><div class="field"><label for="uTitle">Title</label><input class="input" id="uTitle" placeholder="Defaults to the file name"></div>
+      <div class="field hidden" id="uNoWrap"><label for="uNo">Document number <span class="faint">(Full control only)</span></label><input class="input mono" id="uNo" placeholder="Leave empty to number it automatically"></div></div>
     <div class="grid3">
-      <div class="field"><label>Content type</label><select class="input" id="uCt"><option value="">General document</option>${S.tax.content_types.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
-      <div class="field"><label>Classification</label><select class="input" id="uConf"><option value="internal">Internal</option><option value="public">Public</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option></select></div>
+      <div class="field"><label for="uCt">Content type</label><select class="input" id="uCt"><option value="">General document</option>${S.tax.content_types.map((c) => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></div>
+      <div class="field"><label for="uConf">Classification</label><select class="input" id="uConf"><option value="internal">Internal</option><option value="public">Public</option><option value="confidential">Confidential</option><option value="restricted">Restricted</option></select></div>
       <div class="field"><label for="uReview">Next review date <span class="faint">(optional)</span></label><input class="input" type="date" id="uReview" min="${localISODate(1)}"><span class="hint">When this document should be checked again — not the document's own date.</span></div>
     </div>
     <div class="hint conf-hint" id="uConfHint">${esc(CONF_HELP.internal)}</div>
     <div id="uFields"></div>
-    <div class="field"><label>Description</label><textarea class="input" id="uDesc" rows="2" style="min-height:64px" placeholder="What is this document for? Searchable."></textarea></div>
-    <div class="field"><label>Keywords</label><input class="input" id="uKw" placeholder="Comma separated — e.g. hydrotest, jetty, NCR-112"></div>`}
+    <div class="field hidden" id="uTagsWrap"><label>Tags</label><div class="chips" id="uTags"></div><span class="hint">Click a tag to switch it on or off. Tags make the document easier to find and filter.</span></div>
+    <div class="field"><label for="uDesc">Description</label><textarea class="input" id="uDesc" rows="2" style="min-height:64px" placeholder="What is this document for? Searchable."></textarea></div>
+    <div class="field"><label for="uKw">Keywords</label><input class="input" id="uKw" placeholder="Comma separated — e.g. hydrotest, jetty, NCR-112"></div>`}
     <div class="field"><label>After upload</label><div class="mode-pick" id="uMode"></div></div>`,
     foot: `<span class="left faint small" id="uInfo"></span><button class="btn" data-close>Cancel</button><button class="btn primary" data-ok disabled>${icon('upload', 'sm')}Upload</button>` });
 
   const libObj = () => S.libs.find((l) => l.id === +lib) || {};
+  const single = () => !doc && queue.length === 1 && !queue[0].existing && !queue[0].asVersionOf;
   const drawModes = () => {
     if (!S.settings.approvals) { m.$('#uMode').closest('.field').hidden = true; m.$('#uMode').innerHTML = `<input type="radio" name="um" value="publish" checked hidden>`; return; }
     const needs = doc ? true : +libObj().approval_required !== 0;
@@ -1441,40 +1467,198 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
     if (doc || !queue.length) return;
     const r = await api('docs.check_names', undefined, { query: { library_id: lib, folder_id: folder || '', names: queue.map((q) => q.file.name) } });
     queue.forEach((q) => { q.existing = r.existing[q.file.name.toLowerCase()] || null; });
-    drawQueue();
+    drawQueue(); drawToto();
   };
   const drawQueue = () => {
     m.$('#uQueue').innerHTML = queue.map((q, i) => {
-      let st = fmtSize(q.file.size), cls = '';
+      let st = fmtSize(q.file.size), cls = '', extra = '';
       if (q.state === 'done') { st = esc(q.msg); cls = 'ok'; }
       else if (q.state === 'error') { st = esc(q.msg); cls = 'err'; }
-      else if (q.state === 'uploading') st = 'Uploading… ' + Math.round(q.progress) + '%';
+      else if (q.state === 'uploading') st = (q.token ? 'Publishing… ' : 'Uploading… ') + Math.round(q.progress) + '%';
+      else if (q.state === 'analyzing') st = q.progress < 100 ? `Sending… ${Math.round(q.progress)}%` : `${totoMark()} Toto is reading the file…`;
+      else if (q.scan?.state === 'reading') {
+        const pct = q.scan.pages ? Math.round(((q.scan.page || 1) - 1 + (q.scan.pageProgress || 0)) / q.scan.pages * 100) : 0;
+        st = `${totoMark()} ${q.scan.page ? `Toto is reading the scanned text${q.scan.pages > 1 ? ` — page ${q.scan.page} of ${q.scan.pages}` : ''} · ${pct}%` : 'Scan found — waiting to read its text…'}`;
+        extra = `<div class="bar"><i style="width:${pct}%"></i></div>`;
+      }
+      else if (q.asVersionOf) { st = `Will become a new version of “${esc(q.asVersionOf.title)}”`; cls = 'v'; extra = `<button class="linklike small" data-novers="${i}">Upload as a separate document instead</button>`; }
       else if (q.existing) { st = `Same name exists — will become a new version of “${esc(q.existing.title)}” (now ${esc(q.existing.version)})${q.existing.locked ? ' · checked out' : ''}`; cls = 'v'; }
-      return `<div class="uq-item">${fileIcon(q.file.name.split('.').pop(), 'sm')}<div style="min-width:0"><div class="nm">${esc(q.file.name)}</div><div class="st ${cls}">${st}</div>${q.state === 'uploading' ? `<div class="bar"><i style="width:${q.progress}%"></i></div>` : ''}</div>
-        ${q.state ? (q.state === 'done' && q.id ? `<a class="btn sm" href="#/doc/${q.id}">Open</a>` : '') : `<button class="mini-btn" data-rmq="${i}" title="Remove">${icon('x', 'sm')}</button>`}</div>`;
+      else if (q.toto) {
+        const t = q.toto, bits = [];
+        if (q.exact?.length) bits.push(`<span class="st err">The very same file is already in: ${q.exact.map((d) => `<a href="#/doc/${d.id}" target="_blank">${esc(d.title)}</a>`).join(', ')}</span>`);
+        const nd = t.near_duplicates?.[0];
+        if (nd && !q.exact?.length) bits.push(`<span class="st v">${totoMark()} ${nd.match}% the same as <a href="#/doc/${nd.id}" target="_blank">“${esc(nd.title)}”</a>${nd.doc_number ? ` <span class="mono">${esc(nd.doc_number)}</span>` : ''}${nd.can_version ? ` — <button class="linklike" data-asver="${i}">make it a new version of that document</button>` : ''}</span>`);
+        if (t.sensitive?.level && !single()) bits.push(`<span class="st warn">${totoMark()} Looks ${esc(CONF_NAME[t.sensitive.level])}: ${esc(t.sensitive.reasons.filter((r) => r.level === t.sensitive.level).map((r) => r.label).join('; '))}</span>`);
+        if (!bits.length && !single()) bits.push(`<span class="st">${fmtSize(q.file.size)} · ${totoMark()} ${esc(totoBrief(t))}</span>`);
+        if (bits.length) { st = ''; extra = bits.join(''); }
+      }
+      return `<div class="uq-item">${fileIcon(q.file.name.split('.').pop(), 'sm')}<div style="min-width:0"><div class="nm">${esc(q.file.name)}</div>${st ? `<div class="st ${cls}">${st}</div>` : ''}${extra ? `<div class="uq-toto">${extra}</div>` : ''}${['uploading', 'analyzing'].includes(q.state) && q.progress < 100 ? `<div class="bar"><i style="width:${q.progress}%"></i></div>` : ''}</div>
+        ${q.state && q.state !== 'analyzing' ? (q.state === 'done' && q.id ? `<a class="btn sm" href="#/doc/${q.id}">Open</a>` : '') : `<button class="mini-btn" data-rmq="${i}" title="Remove">${icon('x', 'sm')}</button>`}</div>`;
     }).join('');
-    m.$('[data-ok]').disabled = !queue.some((q) => !q.state);
-    m.$('#uSingle')?.classList.toggle('hidden', !(queue.length === 1 && !queue[0].existing));
-    m.$('#uInfo').textContent = queue.length ? `${queue.length} file${queue.length > 1 ? 's' : ''}` : '';
+    const busy = queue.some((q) => q.state === 'analyzing');
+    m.$('[data-ok]').disabled = busy || !queue.some((q) => !q.state);
+    m.$('#uSingle')?.classList.toggle('hidden', !single());
+    m.$('#uInfo').innerHTML = busy ? `${totoMark()} Toto is reading ${plural(queue.filter((q) => q.state === 'analyzing').length, 'file')}…` : queue.length ? `${queue.length} file${queue.length > 1 ? 's' : ''}` : '';
   };
-  const suggest = async () => {
-    if (doc || !queue.length || !props) return;
+
+  /* ---- Toto: suggestions ---- */
+  const markFilled = (el, on = true) => {
+    if (!el) return;
+    el.classList.toggle('toto-filled', on);
+    const lab = el.closest('.field')?.querySelector('label');
+    if (!lab) return;
+    lab.querySelector('.toto-tag')?.remove();
+    if (on) lab.insertAdjacentHTML('beforeend', ' ' + totoTag());
+  };
+  const fill = (el, value) => { if (!el || value == null || value === '' || el.value) return false; el.value = value; markFilled(el); el.dataset.toto = '1'; return true; };
+  const clearFills = () => {   // a second file was added: single-file suggestions no longer apply to the whole batch
+    m.$$('[data-toto="1"]').forEach((el) => { if (el.id === 'uCt') { el.value = ''; ctTouched = false; drawProps(); } else el.value = ''; delete el.dataset.toto; markFilled(el, false); });
+    tagSel.clear(); drawTags(); sensChoice = null;
+  };
+  const totoBrief = (t) => {
+    const n = (t.terms || []).filter((x) => x.auto).length;
+    return [t.content_type?.auto ? t.content_type.name : '', n ? plural(n, 'tag') : '', t.sensitive?.level ? '' : 'no sensitive data seen'].filter(Boolean).join(' · ') || 'nothing to suggest';
+  };
+  const fieldFor = (re, types) => (props ? fieldsForType(m.$('#uCt').value).find((f) => types.includes(f.type) && re.test(f.name)) : null);
+  const applyFieldHints = (t) => {   // revision, document date and number into matching properties of the content type
+    const put = (f, v) => { if (f && v) fill(m.$(`[data-fid="${f.id}"]`), v); };
+    put(fieldFor(/\brev(ision)?\b/i, ['text', 'number', 'choice']), t.revision);
+    put(fieldFor(/date|issued|effective/i, ['date']), t.date);
+    put(fieldFor(/(doc(ument)?|drawing|dwg|ref(erence)?|procedure)\s*(no|number|#)|^number$/i, ['text']), t.doc_number);
+  };
+  const applyTerms = (t) => {
+    (t.terms || []).filter((x) => x.auto).forEach((x) => { if (!props?.addTerm(x.id)) tagSel.add(x.id); });
+    drawTags();
+  };
+  const applyToto = (q) => {
+    const t = q.toto; if (!t || !single()) return;
+    fill(m.$('#uTitle'), t.title);
+    if (t.content_type?.auto && !ctTouched && !m.$('#uCt').value) { m.$('#uCt').value = t.content_type.id; m.$('#uCt').dataset.toto = '1'; markFilled(m.$('#uCt')); drawProps(); ctDefaults(); }
+    applyFieldHints(t);
+    applyTerms(t);
+    if (t.keywords?.length) fill(m.$('#uKw'), t.keywords.join(', '));
+    if (t.doc_number && libObj().level >= 4) m.$('#uNoWrap').classList.remove('hidden');
+    drawToto();
+  };
+  const termById = (id) => termIndex()[id];
+  const drawTags = () => {
+    const w = m.$('#uTagsWrap'); if (!w) return;
+    const offered = new Map();
+    queue.forEach((q) => (q.toto?.terms || []).forEach((x) => { if (!offered.has(x.id)) offered.set(x.id, x); }));
+    // terms that fit a property of the content type are offered there instead
+    const inProps = new Set(fieldsForType(m.$('#uCt').value).filter((f) => f.type === 'term').map((f) => f.termset_id));
+    const list = [...offered.values()].filter((x) => !inProps.has(x.termset_id) || tagSel.has(x.id));
+    w.classList.toggle('hidden', !list.length || !single());
+    m.$('#uTags').innerHTML = list.map((x) => `<button type="button" class="chip ${tagSel.has(x.id) ? 'on' : 'add'}" data-tag="${x.id}" title="${esc(x.termset)} · ${esc(x.why)}">${icon(tagSel.has(x.id) ? 'check' : 'plus', 'sm')}${esc(x.label)} <span class="faint">· ${esc(x.termset)}</span></button>`).join('');
+  };
+  const sensFor = (q) => q.toto?.sensitive?.level && CONF_RANK[q.toto.sensitive.level] > CONF_RANK[m.$('#uConf').value] ? q.toto.sensitive : null;
+  const drawToto = () => {
+    const host = m.$('#uToto'); if (!host || !toto) return;
+    const ready = queue.filter((q) => q.toto && !q.state && !q.existing && !q.asVersionOf);
+    if (!ready.length) { host.innerHTML = ''; return; }
+    let html = '';
+    if (single()) {
+      const t = ready[0].toto, sens = sensFor(ready[0]);
+      if (sens && sensChoice !== 'keep') {
+        html += `<div class="alert amber toto-alert" id="uSens">${icon('shield')}<div class="grow"><b>${totoMark()} Toto found information that looks ${esc(CONF_NAME[sens.level])}</b>
+          <ul class="toto-reasons">${sens.reasons.map((r) => `<li>${esc(r.label)}${r.count > 1 ? ` <span class="faint">× ${r.count}</span>` : ''}</li>`).join('')}</ul>
+          <span class="small">${esc(CONF_HELP[sens.level])}</span></div>
+          <div class="btn-col"><button class="btn sm primary" type="button" data-sens="raise">Make it ${esc(CONF_NAME[sens.level])}</button><button class="btn sm ghost" type="button" data-sens="keep">Keep ${esc(CONF_NAME[m.$('#uConf').value])}</button></div></div>`;
+      }
+      const scanNote = ready[0].scan?.state === 'done' && ready[0].scan.words ? `<div class="small muted">${icon('search', 'sm')} Read from the scan: ${ready[0].scan.words} words${ready[0].scan.partial ? ` (first ${ready[0].scan.ran} of ${ready[0].scan.total} pages — the rest is read after upload)` : ''}${ready[0].scan.confidence != null ? ` · ${ready[0].scan.confidence}% confidence` : ''}.</div>` : '';
+      const filled = [t.title && m.$('#uTitle')?.dataset.toto ? 'title' : '', m.$('#uCt')?.dataset.toto ? 'content type' : '', (t.terms || []).some((x) => x.auto) ? 'tags' : '',
+        m.$('#uKw')?.dataset.toto ? 'keywords' : '', m.$$('#uFields [data-toto="1"]').length ? 'properties' : ''].filter(Boolean);
+      const more = (t.terms || []).filter((x) => !x.auto && !tagSel.has(x.id) && !(props?.pickers && Object.values(props.pickers).some((p) => p.get().includes(x.id))));
+      html += `<div class="toto-box"><div class="toto-h">${totoMark()}<b>Toto read the file</b><span class="faint small">${filled.length ? 'and filled in the ' + filled.join(', ') + ' — check them before you upload.' : t.has_text ? 'There was nothing it could fill in with confidence.' : ready[0].scan?.state === 'reading' ? 'It is a scan, so Toto is reading its text first — suggestions follow in a moment. You can upload now if you prefer; the text is then read afterwards.' : ready[0].scan?.state === 'failed' ? 'It is a scan and its text could not be read here; it will be read again after upload.' : 'No readable text was found, even after reading the scan.'}</span></div>
+        ${scanNote}
+        ${t.doc_number && libObj().level >= 4 && !m.$('#uNo').value ? `<div class="small">The file is numbered <b class="mono">${esc(t.doc_number)}</b>${t.revision ? `, revision <b>${esc(t.revision)}</b>` : ''}. <button class="linklike" type="button" data-usenum>Use this number</button></div>` : ''}
+        ${more.length ? `<div class="small muted" style="margin-top:6px">More tags it noticed:</div><div class="chips" style="margin-top:4px">${more.map((x) => `<button class="chip add" type="button" data-sg="${x.id}" title="${esc(x.why)}">${icon('plus', 'sm')}${esc(x.label)} <span class="faint">· ${esc(x.termset)}</span></button>`).join('')}</div>` : ''}
+        ${t.similar?.length ? `<div class="small muted" style="margin-top:8px">Similar documents already here: ${t.similar.map((d) => `<a href="#/doc/${d.id}" target="_blank">${esc(d.title)}</a> <span class="faint">(${d.match}%)</span>`).join(', ')}</div>` : ''}</div>`;
+    } else {
+      const flagged = ready.filter((q) => sensFor(q));
+      html += `<div class="toto-box"><div class="toto-h">${totoMark()}<b>Toto read ${plural(ready.length, 'file')}</b></div>
+        <label class="check"><input type="checkbox" id="uTotoApply" checked><span>Give each file the tags and content type Toto suggests for it <span class="faint small">(only where it is confident; your choices above still apply to every file)</span></span></label>
+        ${flagged.length ? `<label class="check" style="margin-top:6px"><input type="checkbox" id="uTotoRaise" checked><span><b>Raise ${plural(flagged.length, 'file')} to the classification Toto suggests</b> <span class="faint small">— ${flagged.map((q) => `${esc(q.file.name)} → ${esc(CONF_NAME[q.toto.sensitive.level])}`).join(', ')}</span></span></label>` : ''}</div>`;
+    }
+    host.innerHTML = html;
+  };
+
+  /* ---- staging: Toto reads each file once; the upload then refers to it ---- */
+  const unstage = (items) => { const tokens = items.map((q) => q.token).filter(Boolean); if (tokens.length) api('docs.unstage', { tokens }).catch(() => {}); items.forEach((q) => { q.token = null; }); };
+  const analyze = async (q) => {
+    q.state = 'analyzing'; q.progress = 0; drawQueue();
+    const fd = new FormData();
+    fd.append('file', q.file); fd.append('library_id', lib); if (folder) fd.append('folder_id', folder);
+    try {
+      const r = await xhrUpload(fd, (p) => { q.progress = p; drawQueue(); }, 'docs.analyze');
+      if (!queue.includes(q)) { unstage([{ token: r.token }]); return; }
+      q.token = r.token; q.toto = r.toto || null; q.exact = r.exact_duplicates || []; q.needsOcr = r.needs_ocr;
+      q.state = ''; drawQueue();
+      if (single()) applyToto(q); else drawTags();
+      drawToto();
+      if (r.needs_ocr && OCR_EXT.includes(q.file.name.split('.').pop().toLowerCase())) readScan(q);
+    } catch (e) {
+      q.state = ''; q.toto = null; q.token = null; drawQueue();   // fall back to a plain upload
+      toast(`Toto couldn't read ${q.file.name}: ${e.message}`, 'err');
+    }
+  };
+
+  /* ---- scans: read the text in this browser (the same engine as everywhere else), then let Toto look again ---- */
+  let scanChain = Promise.resolve(), scanTimer = null;
+  const readScan = (q) => {
+    q.scan = { state: 'reading', page: 0, pages: 0, pageProgress: 0 };
+    drawQueue(); drawToto();
+    if (!scanTimer) scanTimer = setInterval(() => { if (queue.some((x) => x.scan?.state === 'reading')) drawQueue(); else { clearInterval(scanTimer); scanTimer = null; } }, 500);
+    scanChain = scanChain.then(async () => {
+      if (!queue.includes(q) || !q.token || q.state) { q.scan.state = 'skipped'; return; }   // removed or already uploaded
+      try {
+        const ext = q.file.name.split('.').pop().toLowerCase();
+        const r = await recogniseFile(q.file, ext, q.scan, { maxPages: 12 });
+        OCRQ.current = null;
+        if (!q.token || q.state || q.scan.cancelled) { q.scan.state = 'skipped'; return; }
+        const partial = r.partial ? '1' : '0';
+        const res = await api('docs.stage_text', { token: q.token, text: r.text.slice(0, 400000), pages: r.pages, ocr_pages_run: r.ranPages, confidence: r.confidence, partial });
+        Object.assign(q.scan, { state: 'done', words: res.words, partial: r.partial, ran: Math.min(r.pages, 12), total: r.pages, confidence: r.ranPages ? r.confidence : null, full: res.full });
+        if (res.toto) {
+          q.toto = Object.assign({}, res.toto);
+          if (single()) applyToto(q); else drawTags();
+        }
+      } catch (e) {
+        OCRQ.current = null;
+        q.scan.state = /expired/i.test(e.message) ? 'skipped' : 'failed';
+      }
+      drawQueue(); drawToto();
+    });
+  };
+
+  const suggest = async () => {   // without Toto: suggestions from the file name, title and keywords only
+    if (toto || doc || !queue.length || !props) return;
     const text = queue.map((q) => q.file.name.replace(/[_.-]+/g, ' ')).join(' ') + ' ' + (m.$('#uTitle')?.value || '') + ' ' + (m.$('#uDesc')?.value || '') + ' ' + (m.$('#uKw')?.value || '');
     const r = await api('docs.suggest', undefined, { query: { text } });
     const usable = r.suggest.filter((s) => fieldsForType(m.$('#uCt').value).some((f) => f.type === 'term' && f.termset_id === s.termset_id));
     m.$('#uSuggest').innerHTML = usable.length ? `<div class="alert teal">${icon('sparkle')}<div class="grow"><b>Suggested tags</b><div class="chips" style="margin-top:6px">${usable.map((s) => `<button class="chip add" data-sg="${s.id}" type="button">${icon('plus', 'sm')}${esc(s.label)} <span class="faint">· ${esc(s.termset)}</span></button>`).join('')}</div></div></div>` : '';
   };
   const addFiles = (list) => {
+    const wasSingle = single();
+    const added = [];
     for (const f of list) {
       const ext = f.name.split('.').pop().toLowerCase();
       if (S.settings.allowed_ext?.length && !S.settings.allowed_ext.includes(ext)) { toast(`.${ext} files aren't allowed here.`, 'err'); continue; }
       if (f.size > S.settings.max_upload_mb * 1048576) { toast(`${f.name} is larger than ${S.settings.max_upload_mb} MB.`, 'err'); continue; }
       if (doc) queue.length = 0;
-      if (!queue.some((q) => q.file.name === f.name && q.file.size === f.size)) queue.push({ file: f, state: '', progress: 0 });
+      if (!queue.some((q) => q.file.name === f.name && q.file.size === f.size)) { const q = { file: f, state: '', progress: 0 }; queue.push(q); added.push(q); }
     }
+    if (wasSingle && queue.length > 1) clearFills();
     drawQueue(); checkNames(); suggest();
+    if (toto) added.forEach(analyze);
   };
-  const drawProps = () => { if (doc) return; props = renderFieldInputs(m.$('#uFields'), fieldsForType(m.$('#uCt').value)); suggest(); };
+  const drawProps = () => {
+    if (doc) return;
+    const keep = props ? props.collect() : {};
+    props = renderFieldInputs(m.$('#uFields'), fieldsForType(m.$('#uCt').value));
+    if (single()) { const q = queue[0]; if (q?.toto) { applyFieldHints(q.toto); applyTerms(q.toto); } }
+    void keep; drawTags(); suggest();
+  };
   const ctDefaults = () => {
     const ct = S.tax.content_types.find((c) => c.id === +m.$('#uCt').value);
     if (ct?.review_months && !m.$('#uReview').value) m.$('#uReview').value = localISODate(0, ct.review_months);
@@ -1490,12 +1674,27 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
   drop.addEventListener('drop', (e) => addFiles([...e.dataTransfer.files]));
   m.el.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); if (!drop.contains(e.target)) addFiles([...e.dataTransfer.files]); });
   m.el.addEventListener('dragover', (e) => e.preventDefault());
-  m.$('#uQueue').addEventListener('click', (e) => { const b = e.target.closest('[data-rmq]'); if (b) { queue.splice(+b.dataset.rmq, 1); drawQueue(); } });
-  m.$('#uSuggest').addEventListener('click', (e) => { const b = e.target.closest('[data-sg]'); if (b && props?.addTerm(+b.dataset.sg)) b.remove(); });
-  m.$('#uLib')?.addEventListener('change', (e) => { lib = +e.target.value; folder = null; drawModes(); fillFolders(); });
+  m.$('#uQueue').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-rmq]'); if (b) { const [q] = queue.splice(+b.dataset.rmq, 1); if (q.scan) q.scan.cancelled = true; unstage([q]); drawQueue(); if (single() && queue[0]?.toto) applyToto(queue[0]); drawTags(); drawToto(); return; }
+    const av = e.target.closest('[data-asver]'); if (av) { const q = queue[+av.dataset.asver]; const nd = q.toto.near_duplicates[0]; q.asVersionOf = { id: nd.id, title: nd.title }; if (queue.length === 1) clearFills(); drawQueue(); drawToto(); return; }
+    const nv = e.target.closest('[data-novers]'); if (nv) { queue[+nv.dataset.novers].asVersionOf = null; drawQueue(); if (single()) applyToto(queue[0]); drawToto(); }
+  });
+  const host = m.$('.modal-b');
+  host.addEventListener('click', (e) => {
+    const sg = e.target.closest('[data-sg]'); if (sg) { const id = +sg.dataset.sg; if (!props?.addTerm(id)) { tagSel.add(id); drawTags(); } sg.remove(); drawToto(); return; }
+    const tg = e.target.closest('[data-tag]'); if (tg) { const id = +tg.dataset.tag; tagSel.has(id) ? tagSel.delete(id) : tagSel.add(id); drawTags(); return; }
+    const sn = e.target.closest('[data-sens]'); if (sn) {
+      const sens = sensFor(queue[0]); sensChoice = sn.dataset.sens;
+      if (sensChoice === 'raise' && sens) { m.$('#uConf').value = sens.level; m.$('#uConf').dispatchEvent(new Event('change')); markFilled(m.$('#uConf')); }
+      drawToto(); return;
+    }
+    if (e.target.closest('[data-usenum]')) { const q = queue[0]; m.$('#uNo').value = q.toto.doc_number; markFilled(m.$('#uNo')); drawToto(); }
+  });
+  host.addEventListener('input', (e) => { if (e.target.dataset?.toto) { delete e.target.dataset.toto; markFilled(e.target, false); } });
+  m.$('#uLib')?.addEventListener('change', (e) => { lib = +e.target.value; folder = null; drawModes(); fillFolders(); if (!(libObj().level >= 4)) { m.$('#uNoWrap').classList.add('hidden'); m.$('#uNo').value = ''; } drawToto(); });
   m.$('#uFolder')?.addEventListener('change', (e) => { folder = +e.target.value || null; checkNames(); });
-  m.$('#uCt')?.addEventListener('change', () => { drawProps(); ctDefaults(); });
-  m.$('#uConf')?.addEventListener('change', (e) => { const h = m.$('#uConfHint'); h.textContent = CONF_HELP[e.target.value]; h.classList.toggle('warn', isSensitive(e.target.value)); });
+  m.$('#uCt')?.addEventListener('change', (e) => { if (e.isTrusted) { ctTouched = true; delete e.target.dataset.toto; markFilled(e.target, false); } drawProps(); ctDefaults(); drawToto(); });
+  m.$('#uConf')?.addEventListener('change', (e) => { const h = m.$('#uConfHint'); h.textContent = CONF_HELP[e.target.value]; h.classList.toggle('warn', isSensitive(e.target.value)); if (e.isTrusted) markFilled(e.target, false); drawQueue(); drawToto(); });
   m.$('#uTitle')?.addEventListener('input', debounce(suggest, 400));
   m.$('#uKw')?.addEventListener('input', debounce(suggest, 400));
 
@@ -1505,36 +1704,54 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
     const pending = queue.filter((q) => !q.state);
     if (!pending.length) return;
     if (props) { const miss = props.missing(); if (miss.length) return toast('Fill in: ' + miss.join(', '), 'err'); }
+    if (single() && sensFor(queue[0]) && !sensChoice) { m.$('#uSens')?.scrollIntoView({ block: 'center', behavior: 'smooth' }); return toast('Toto found sensitive information — choose a classification first.', 'err'); }
     const mode = m.$('input[name=um]:checked')?.value || 'draft';
+    const perFile = !!m.$('#uTotoApply')?.checked, raise = !!m.$('#uTotoRaise')?.checked;
     const btn = m.$('[data-ok]'); btn.disabled = true;
     let ok = 0;
     for (const q of pending) {
       const fd = new FormData();
-      fd.append('file', q.file);
+      if (q.token) fd.append('stage_token', q.token); else fd.append('file', q.file);
       fd.append('submit', mode);
       if (doc) { fd.append('document_id', doc.id); fd.append('comment', m.$('#uComment').value); }
+      else if (q.asVersionOf) { fd.append('document_id', q.asVersionOf.id); fd.append('comment', 'New version — Toto found it was nearly the same document'); }
       else {
+        const t = q.toto;
+        let ct = m.$('#uCt').value, conf = m.$('#uConf').value, kw = m.$('#uKw').value;
+        const tags = new Set(single() ? tagSel : []);
+        if (!single() && t && perFile) {
+          if (!ct && t.content_type?.auto) ct = t.content_type.id;
+          (t.terms || []).filter((x) => x.auto).forEach((x) => tags.add(x.id));
+          if (!kw && t.keywords?.length) kw = t.keywords.join(', ');
+        }
+        if (!single() && raise && sensFor(q)) conf = q.toto.sensitive.level;
         fd.append('library_id', lib); if (folder) fd.append('folder_id', folder);
-        fd.append('content_type_id', m.$('#uCt').value); fd.append('confidentiality', m.$('#uConf').value); fd.append('review_date', m.$('#uReview').value);
-        fd.append('description', m.$('#uDesc').value); fd.append('keywords', m.$('#uKw').value);
-        if (pending.length === 1 && queue.length === 1 && m.$('#uTitle').value.trim()) fd.append('title', m.$('#uTitle').value.trim());
-        fd.append('meta', JSON.stringify(props ? props.collect() : {}));
+        fd.append('content_type_id', ct); fd.append('confidentiality', conf); fd.append('review_date', m.$('#uReview').value);
+        fd.append('description', m.$('#uDesc').value); fd.append('keywords', kw);
+        if (single() && m.$('#uTitle').value.trim()) fd.append('title', m.$('#uTitle').value.trim());
+        else if (!single() && t?.title && perFile) fd.append('title', t.title);
+        if (single() && m.$('#uNo')?.value.trim()) fd.append('doc_number', m.$('#uNo').value.trim());
+        fd.append('meta', JSON.stringify(props && ct === m.$('#uCt').value ? props.collect() : {}));
+        if (tags.size) fd.append('tags', [...tags].join(','));
         if (q.existing) fd.append('comment', 'New upload with the same file name');
       }
+      if (q.scan?.state === 'reading') q.scan.cancelled = true;   // uploading now: the text is read in the background afterwards
       q.state = 'uploading'; drawQueue();
       try {
         const r = await xhrUpload(fd, (p) => { q.progress = p; drawQueue(); });
-        q.state = 'done'; q.id = r.id; ok++;
+        q.state = 'done'; q.id = r.id; q.token = null; ok++;
         const verb = r.status === 'published' ? 'published' : r.status === 'pending' ? 'sent for approval' : 'saved as draft';
         q.msg = (r.versioned ? `Version ${r.version} of “${r.title}”` : `Version ${r.version}`) + ' · ' + verb + (r.indexed ? ' · text indexed' : '');
         if (r.needs_ocr && ocrEnqueue({ docId: r.id, versionId: r.version_id, title: r.title, ext: r.ext, file: q.file })) q.msg += ' · scan detected — reading its text in the background';
         if (r.duplicates?.length) { q.msg += ` · Same file also in: ${r.duplicates.map((d) => d.title).join(', ')}`; }
-      } catch (e) { q.state = 'error'; q.msg = e.message; }
+      } catch (e) { q.state = 'error'; q.msg = e.message; if (/expired/i.test(e.message)) q.token = null; }
       drawQueue();
     }
+    m.$('#uToto') && (m.$('#uToto').innerHTML = '');
     btn.disabled = false;
     if (ok) { onDone && onDone(); refreshCounts(); loadLibs(true).then(renderSideLibs); }
     if (ok === pending.length) {
+      finished = true;
       toast(ok === 1 ? 'Uploaded.' : `${ok} files uploaded.`);
       if (doc || ok === 1) { m.close(); const id = queue.find((q) => q.id)?.id; if (doc || !onDone) go('#/doc/' + id); }
       else { btn.textContent = 'Done'; btn.disabled = false; btn.onclick = () => m.close(); }
@@ -1542,10 +1759,10 @@ async function openUpload({ libraryId = null, folderId = null, documentId = null
   };
 }
 
-function xhrUpload(fd, onProgress) {
+function xhrUpload(fd, onProgress, route = 'docs.upload') {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open('POST', 'api.php?r=docs.upload');
+    x.open('POST', 'api.php?r=' + route);
     x.setRequestHeader('X-CSRF-Token', S.csrf);
     x.upload.onprogress = (e) => { if (e.lengthComputable) onProgress(e.loaded / e.total * 100); };
     x.onload = () => {
@@ -1605,10 +1822,14 @@ route('/doc/(\\d+)', async (page, [id], params) => {
       ${d.status === 'rejected' && lastReject ? `<div class="alert red">${icon('alert')}<div class="grow"><b>${esc(lastReject.decider)} requested changes</b>${esc(lastReject.note)}</div>${c.upload_version ? `<button class="btn sm" data-a="version">Upload fix</button>` : ''}</div>` : ''}
       ${!S.settings.approvals && d.status !== 'published' && c.publish_direct ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Not published yet</b>This version was saved before direct publishing was switched on, so only you and a few others can see it.</div><button class="btn sm primary" data-a="publish">${icon('check', 'sm')}Publish now</button></div>` : ''}
       ${d.status === 'draft' && c.submit ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Draft</b>Only you and approvers can see this version.</div><button class="btn sm primary" data-a="submit">${icon('send', 'sm')}Send for approval</button>${c.publish_direct ? `<button class="btn sm" data-a="approve">Publish now</button>` : ''}</div>` : ''}
-      ${d.checked_out_by ? `<div class="alert amber">${icon('lock')}<div class="grow"><b>Checked out by ${d.checked_out_by === S.user.id ? 'you' : esc(d.checked_out_name)}</b>${d.checked_out_by === S.user.id ? 'Upload the new version to check it in automatically, or release it.' : 'You can read it, but new versions are blocked until it’s checked in.'}</div>
+      ${inputBanner(r)}
+      ${d.checked_out_by && !r.input?.open ? `<div class="alert amber">${icon('lock')}<div class="grow"><b>Checked out by ${d.checked_out_by === S.user.id ? 'you' : esc(d.checked_out_name)}</b>${d.checked_out_by === S.user.id ? 'Upload the new version to check it in automatically, or release it.' : 'You can read it, but new versions are blocked until it’s checked in.'}</div>
         ${d.checked_out_by === S.user.id || c.permissions ? `<button class="btn sm" data-a="checkin">Release</button>` : ''}</div>` : ''}
       ${r.ocr?.needed ? `<div class="alert teal" id="ocrNotice">${icon('search')}<div class="grow"><b>Words in this file can't be searched yet</b>It's a scan or a picture, so it contains no real text. ${r.ocr.can ? 'Text recognition reads the words so search can find them — it runs here in your browser.' : 'The author or an approver can make it searchable.'}</div>
         ${r.ocr.can ? `<button class="btn sm primary" data-a="ocr">${icon('sparkle', 'sm')}Make it searchable</button>` : ''}</div>` : ''}
+      ${r.toto?.sensitive ? `<div class="alert amber toto-alert">${icon('shield')}<div class="grow"><b>${totoMark()} Toto thinks this document is more sensitive than “${esc(CONF_NAME[d.confidentiality] || d.confidentiality)}”</b>
+        It contains: ${esc(r.toto.sensitive.reasons.filter((x) => x.level !== 'confidential' || r.toto.sensitive.level === 'confidential').map((x) => x.label).join('; '))}. Consider classifying it as <strong>${esc(CONF_NAME[r.toto.sensitive.level])}</strong>.</div>
+        ${c.edit ? `<button class="btn sm" data-a="edit">${icon('edit', 'sm')}Change classification</button>` : ''}</div>` : ''}
       ${c.review && (d.review_overdue || d.review_due_soon) ? `<div class="alert amber">${icon('history')}<div class="grow"><b>${d.review_overdue ? 'Review overdue' : 'Review due soon'}</b>${d.review_overdue ? 'This document was due for review on' : 'This document is due for review on'} ${esc(fmtDate(d.review_date))}. Check it is still correct, upload a new version if anything changed, then mark it as reviewed.</div>
         <button class="btn sm" data-a="reviewed">${icon('check', 'sm')}Mark as reviewed</button></div>` : ''}
     </div>
@@ -1630,10 +1851,13 @@ route('/doc/(\\d+)', async (page, [id], params) => {
       </div>
       <div class="side-stack">
         ${titleBlock(d, r.approvals, { press: pressed })}
+        ${r.toto?.summary?.length ? `<div class="panel toto-panel"><div class="panel-h"><h3>${totoMark()}Key points</h3><span class="faint small" title="Sentences picked from the document by Toto, the built-in assistant">by Toto</span></div>
+          <div class="panel-b"><ul class="toto-points">${r.toto.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><div class="faint small">Picked from the document's own text — read the document for the full picture.</div></div></div>` : ''}
         <div class="panel"><div class="panel-h"><h3>Properties</h3>${c.edit ? `<button class="btn sm ghost" data-a="edit">${icon('edit', 'sm')}Edit</button>` : ''}</div>
           <div class="panel-b"><dl class="kv">
             ${d.description ? `<dt>Description</dt><dd>${esc(d.description)}</dd>` : ''}
             ${r.props.filter((p) => (Array.isArray(p.value) ? p.value.length : p.value)).map((p) => `<dt>${esc(p.name)}</dt><dd>${propValue(p)}</dd>`).join('')}
+            ${r.free_terms?.length ? `<dt>Tags</dt><dd><div class="chips">${r.free_terms.map((t) => `<span class="chip ghost">${esc(t.label)}</span>`).join('')}</div></dd>` : ''}
             ${d.keywords ? `<dt>Keywords</dt><dd><div class="chips">${d.keywords.split(',').map((k) => k.trim()).filter(Boolean).map((k) => `<a class="chip ghost" href="#/search?q=${encodeURIComponent(k)}">${esc(k)}</a>`).join('')}</div></dd>` : ''}
             <dt>Classification</dt><dd>${conf(d.confidentiality)}${d.classification_rule ? `<div class="small muted" style="margin-top:4px">${esc(d.classification_rule)}${d.named_count ? ` ${plural(d.named_count, 'person or group', 'people or groups')} named.` : ''}${c.permissions ? ` <a href="" data-a="perms">Manage who can see it</a>` : ''}</div>` : ''}</dd>
             ${d.review_date ? `<dt>Next review</dt><dd>${esc(fmtDate(d.review_date))}${d.review_overdue ? ' <span style="color:var(--amber)">· overdue</span>' : ''}</dd>` : ''}
@@ -1642,12 +1866,12 @@ route('/doc/(\\d+)', async (page, [id], params) => {
             <dt>Usage</dt><dd>${plural(d.views, 'view')} by ${plural(d.viewers, 'person', 'people')} · ${plural(d.downloads, 'download')}</dd>
             <dt>Your access</dt><dd>${esc(r.level_name)}${d.inherit ? '' : ' · unique permissions'}</dd>
           </dl></div>
-          ${r.suggest.length ? `<div class="panel-b" style="border-top:1px solid var(--line)"><div class="label" style="display:flex;gap:6px;align-items:center;margin-bottom:8px">${icon('sparkle', 'sm')}Suggested tags from the content</div>
+          ${r.suggest.length ? `<div class="panel-b" style="border-top:1px solid var(--line)"><div class="label" style="display:flex;gap:6px;align-items:center;margin-bottom:8px">${totoMark()}Toto suggests these tags</div>
             <div class="chips">${r.suggest.map((s) => `<button class="chip add" data-addterm="${s.id}" title="${esc(s.termset)}">${icon('plus', 'sm')}${esc(s.label)}</button>`).join('')}</div></div>` : ''}
         </div>
         <div class="panel"><div class="panel-h"><h3>Related documents</h3>${c.edit ? `<button class="btn sm ghost" data-a="link">${icon('link', 'sm')}Link</button>` : ''}</div>
           <div class="doc-rows">${r.related.map((x) => miniRow(x, c.edit ? `<button class="mini-btn" data-unlink="${x.id}" title="Remove link">${icon('x', 'sm')}</button>` : '')).join('') || '<div class="panel-b faint small">No linked documents yet.</div>'}</div>
-          ${r.similar.length ? `<div class="panel-h" style="border-top:1px solid var(--line)"><h3 class="muted" style="font-size:13px">Similar by tags</h3></div><div class="doc-rows">${r.similar.map((x) => miniRow(x, `<span class="faint small">${x.shared} shared</span>`)).join('')}</div>` : ''}
+          ${r.similar.length ? `<div class="panel-h" style="border-top:1px solid var(--line)"><h3 class="muted" style="font-size:13px">${r.toto?.on ? `${totoMark()}Similar documents` : 'Similar by tags'}</h3>${r.toto?.on ? '<span class="faint small">found by Toto</span>' : ''}</div><div class="doc-rows">${r.similar.map((x) => miniRow(x, `<span class="faint small" title="${x.match ? 'How alike the text is' : 'Tags in common'}">${x.near_copy ? '<b style="color:var(--amber)">near copy</b> · ' : ''}${x.match ? x.match + '% alike' : ''}${x.match && x.shared ? ' · ' : ''}${x.shared ? plural(x.shared, 'shared tag') : ''}</span>`)).join('')}</div>` : ''}
         </div>
       </div>
     </div>`;
@@ -1712,6 +1936,23 @@ route('/doc/(\\d+)', async (page, [id], params) => {
     if (act === 'reject') { const note = await promptBox({ title: 'Request changes', label: 'What should the author change?', textarea: true, ok: 'Send back' }); if (!note) return; await run(api('docs.reject', { id, note }), (x) => x.message); refreshCounts(); return navigate(); }
     if (act === 'submit') { const note = await promptBox({ title: 'Send for approval', label: 'Message for the approver (optional)', textarea: true, required: false, ok: 'Send for approval' }); if (note === null) return; await run(api('docs.submit', { id, note }), 'Sent for approval.'); return navigate(); }
     if (act === 'withdraw') { await run(api('docs.cancel_request', { id }), 'Request withdrawn.'); return navigate(); }
+    if (act === 'input-done') {
+      const o = r.input.open;
+      const note = await promptBox({ title: 'Finish your input', label: o.saved_at ? `Your last save (${fmtDate(o.saved_at, true)}) becomes the next version. Anything to tell ${o.requester}? (optional)` : `You haven’t saved any changes yet — finishing now leaves the document as it was. A note for ${o.requester}? (optional)`, textarea: true, required: false, ok: 'I’m done' });
+      if (note === null) return;
+      await run(api('docs.input_done', { id, comment: note || '' }), (x) => x.message); return navigate();
+    }
+    if (act === 'input-cancel') {
+      const o = r.input.open;
+      if (!await confirmBox(`Withdraw the request to ${o.assignee}?${o.saved_at ? ' Changes they saved but haven’t finished will be discarded.' : ''} The document is unlocked again.`, { ok: 'Withdraw', danger: !!o.saved_at })) return;
+      await run(api('docs.input_cancel', { id }), (x) => x.message); return navigate();
+    }
+    if (act === 'input-upload') {
+      const fi = document.createElement('input'); fi.type = 'file'; fi.accept = '.' + d.ext;
+      fi.onchange = async () => { if (!fi.files[0]) return; const fd = new FormData(); fd.append('id', id); fd.append('file', fi.files[0]);
+        try { const x = await xhrUpload(fd, () => {}, 'docs.input_upload'); toast(x.message); navigate(); } catch (err) { toast(err.message, 'err'); } };
+      fi.click(); return;
+    }
     if (act === 'checkin') { await run(api('docs.checkout', { id, action: 'in' }), 'Released.'); return navigate(); }
     if (act === 'edit') return editProps(r, navigate);
     if (act === 'link') return linkDoc(id);
@@ -1772,6 +2013,7 @@ function moreMenu(anchor, r) {
   const items = [
     c.checkout && !d.checked_out_by ? ['lock', 'Check out (lock for editing)', async () => { await run(api('docs.checkout', { id: d.id, action: 'out' }), (x) => x.message); navigate(); }] : null,
     c.edit ? ['edit', 'Edit properties', () => editProps(r, navigate)] : null,
+    r.input?.can_request ? ['users', 'Request input…', () => requestInput(r, navigate)] : null,
     ['link', 'Copy link', () => { navigator.clipboard?.writeText(location.origin + location.pathname + '#/doc/' + d.id); toast('Link copied.'); }],
     c.move ? ['move', 'Move', () => openMove([d.id], navigate)] : null,
     c.permissions ? ['shield', 'Manage permissions', () => openPermissions('document', d.id, d.title, navigate)] : null,
@@ -1869,6 +2111,51 @@ function markReviewed(d, onDone) {
   m.$('[data-ok]').onclick = async () => {
     await run(api('docs.reviewed', { id: d.id, next: m.$('#rvNone').checked ? '' : m.$('#rvNext').value, note: m.$('#rvNote').value }), (x) => x.message);
     m.close(); onDone();
+  };
+}
+
+
+/* ---------------- Requests for input ---------------- */
+function inputBanner(r) {
+  const o = r.input?.open; if (!o) return '';
+  const due = o.due_date ? ` · due <strong>${esc(fmtDate(o.due_date))}</strong>${o.due_date < localISODate(0) ? ' <span style="color:var(--red)">(overdue)</span>' : ''}` : '';
+  const saved = o.saved_at ? `Last saved ${esc(fmtDate(o.saved_at, true))}${o.saves > 1 ? ` · ${o.saves} saves` : ''}.` : 'No changes saved yet.';
+  if (o.mine) {
+    const dl = o.link ? o.link.split('|u|')[1] : '';
+    return `<div class="alert input-me">${icon('edit')}<div class="grow"><b>${esc(o.requester)} asked for your input</b>${o.message ? `<span class="input-msg">“${esc(o.message)}”</span>` : ''}
+      <span class="small">Only you can edit this document until you finish${due}. ${saved}</span>
+      <span class="small muted">Edit in ${esc(o.app)} opens the file in the ${esc(o.app)} on your computer. Press Save there as often as you like — then come back and press <strong>I’m done</strong>.
+      No ${esc(o.app)}? <a href="${esc(dl)}" download>Download the file</a>, edit it, and <button class="linklike" data-a="input-upload">upload your copy</button>.</span></div>
+      <div class="btn-col">${o.link ? `<a class="btn sm primary" href="${esc(o.link)}">${icon('edit', 'sm')}Edit in ${esc(o.app)}</a>` : ''}<button class="btn sm" data-a="input-done">${icon('check', 'sm')}I’m done</button></div></div>`;
+  }
+  return `<div class="alert amber">${icon('lock')}<div class="grow"><b>Waiting for input from ${esc(o.assignee)}</b>${o.message ? `<span class="input-msg">“${esc(o.message)}”</span>` : ''}
+    <span class="small">Asked by ${esc(o.requester)} ${esc(fmtDate(o.created_at))}${due}. Only ${esc(o.assignee.split(' ')[0])} can edit it until they finish. ${saved}</span></div>
+    ${o.can_cancel ? `<button class="btn sm ghost" data-a="input-cancel">Withdraw request</button>` : ''}</div>`;
+}
+
+async function requestInput(r, done) {
+  const d = r.doc;
+  const dir = await loadDir();
+  const people = dir.people.filter((p) => p.id !== S.user.id);
+  const m = modal({ title: 'Request input', body: `
+    <p class="muted" style="margin-top:0">Choose <b>one person</b>. Only they will be able to edit <b>${esc(d.title)}</b> — in their own Word, Excel or PowerPoint — until they finish or you withdraw the request. Their saves become the next version.</p>
+    <div class="field"><label for="riFind">Who should give input?</label><input class="input" id="riFind" placeholder="Type a name…" autocomplete="off"><div class="ri-list" id="riList"></div></div>
+    <div class="field"><label for="riMsg">What do you need from them?</label><textarea class="input" id="riMsg" rows="3" placeholder="e.g. Please update section 4 with the new hold time and check the test pressures."></textarea></div>
+    <div class="field"><label for="riDue">Due date <span class="faint">(optional)</span></label><input class="input" type="date" id="riDue" min="${localISODate(0)}" style="max-width:200px"></div>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" data-ok disabled>${icon('send', 'sm')}Send request</button>` });
+  let pick = null;
+  const draw = () => {
+    const q = m.$('#riFind').value.trim().toLowerCase();
+    const list = people.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.department || '').toLowerCase().includes(q) || (p.job_title || '').toLowerCase().includes(q)).slice(0, 8);
+    m.$('#riList').innerHTML = list.map((p) => `<button type="button" class="ri-p ${pick === p.id ? 'on' : ''}" data-p="${p.id}">${avatar(p.name)}<span><b>${esc(p.name)}</b><span class="faint small">${esc([p.job_title, p.department].filter(Boolean).join(' · '))}</span></span>${pick === p.id ? icon('check', 'sm') : ''}</button>`).join('') || '<div class="small muted">Nobody matches.</div>';
+  };
+  draw();
+  m.$('#riFind').addEventListener('input', draw);
+  m.$('#riList').addEventListener('click', (e) => { const b = e.target.closest('[data-p]'); if (!b) return; pick = +b.dataset.p; m.$('[data-ok]').disabled = false; draw(); });
+  m.$('[data-ok]').onclick = async () => {
+    if (!pick) return;
+    try { const x = await api('docs.input_request', { id: d.id, assignee_id: pick, message: m.$('#riMsg').value, due_date: m.$('#riDue').value }); toast(x.message); m.close(); done && done(); }
+    catch (e) { toast(e.message, 'err'); }
   };
 }
 /* Home, collections, search, approvals, people, profile, recycle bin */
@@ -2482,7 +2769,7 @@ route('/admin/settings', async (page) => {
         <div class="field"><label>Platform name</label><input class="input" data-k="site_name" value="${esc(s.site_name)}"></div>
         <div class="field"><label>Organisation</label><input class="input" data-k="org_name" value="${esc(s.org_name)}"></div>
         <div class="field"><label>Welcome text</label><textarea class="input" data-k="welcome_text">${esc(s.welcome_text)}</textarea></div>
-        <div class="field"><label>Site address</label><input class="input" data-k="base_url" value="${esc(s.base_url)}" placeholder="https://km.arginternational.ae/"><span class="hint">Used for links in notification emails.</span></div></div></div>
+        <div class="field"><label>Site address</label><input class="input" data-k="base_url" value="${esc(s.base_url)}" placeholder="https://km.taifagaskenya.co.ke"><span class="hint">Used for links in notification emails and for opening documents in Word, Excel and PowerPoint.</span></div></div></div>
       <div class="panel"><div class="panel-h"><h3>Documents</h3></div><div class="panel-b" style="display:grid;gap:14px">
         <div class="field"><label>Document number pattern</label><input class="input mono" data-k="number_pattern" value="${esc(s.number_pattern)}"><span class="hint">Tokens: {LIB} library code, {TYPE} content-type code, {SEQ} running number, {YYYY} / {YY} year.</span></div>
         <div class="grid2"><div class="field"><label>Max upload (MB)</label><input class="input" type="number" data-k="max_upload_mb" value="${esc(s.max_upload_mb)}"><span class="hint">Server allows ${esc(sv.upload_max_filesize)} per file / ${esc(sv.post_max_size)} per request.</span></div>
@@ -2502,11 +2789,64 @@ route('/admin/settings', async (page) => {
         <div class="field"><label>Sign out after inactivity (minutes)</label><input class="input" type="number" data-k="session_minutes" value="${esc(s.session_minutes)}"></div>
         <label class="check"><input type="checkbox" data-k="email_notifications" ${s.email_notifications === '1' ? 'checked' : ''}><span><b>Also send notifications by email</b><br><span class="small muted">Uses the server’s mail function. Create the sender mailbox in cPanel → Email Accounts first.</span></span></label>
         <div class="field"><label>Sender address</label><input class="input" data-k="mail_from" value="${esc(s.mail_from)}" placeholder="no-reply@arginternational.ae"></div></div></div>
+      <div class="panel toto-panel"><div class="panel-h"><h3>${totoMark()}Toto — document assistant</h3><span class="faint small" id="totoStat"></span></div><div class="panel-b" style="display:grid;gap:14px">
+        <label class="check"><input type="checkbox" data-k="ai_enabled" ${s.ai_enabled !== '0' ? 'checked' : ''}><span><b>Let Toto read uploads and suggest properties</b><br><span class="small muted">Suggests tags, content type, title, number and date; warns about salary, ID, bank and other personal data; spots near-copies; writes key points and finds similar documents. It runs entirely on this server — no paid service, and nothing is sent outside.</span></span></label>
+        <label class="check"><input type="checkbox" data-k="ai_voice_input" ${s.ai_voice_input !== '0' ? 'checked' : ''}><span><b>Let people talk to Toto with the microphone</b><br><span class="small muted">Toto’s own voice is made by the browser on the computer. Turning speech into text is done by the browser’s speech service — in Chrome that is Google’s and in Edge Microsoft’s — so only the spoken question leaves the computer, never documents. Switch this off if even that is not allowed.</span></span></label>
+        <div class="field"><label>Toto’s creator</label><input class="input" data-k="ai_creator" value="${esc(s.ai_creator || 'Om Khadka')}"><span class="hint">Toto tells everyone who asks that this person programmed the platform and him.</span></div>
+        <div id="totoIdx" class="small muted"></div>
+        <div><div class="label" style="margin-bottom:6px">What Toto has been taught</div><div id="totoFacts" class="small muted">Administrators teach Toto in Ask Toto: “remember that the site office opens at 7 am”.</div></div>
+        <div class="btn-row"><button class="btn sm" id="totoRebuild">${icon('sparkle', 'sm')}Rebuild Toto's index</button><span class="small faint" id="totoProg"></span></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>${icon('edit')}Editing in Word, Excel &amp; PowerPoint</h3></div><div class="panel-b" style="display:grid;gap:10px">
+        <p class="small muted" style="margin:0">When someone is asked for input on a document, they open it in their own Office app straight from the hub and save it back. That needs the server to let Office’s WebDAV requests through (some hosts block them). Test it here.</p>
+        <div class="btn-row"><button class="btn sm" id="davTest">${icon('check', 'sm')}Test Office editing</button></div><div id="davRes" class="small"></div></div></div>
       <div class="panel"><div class="panel-h"><h3>Server</h3></div><div class="panel-b"><dl class="kv">
         <dt>Version</dt><dd>${esc(sv.app_version)}</dd><dt>PHP</dt><dd>${esc(sv.php)}</dd><dt>Database</dt><dd>${esc(sv.mysql)}</dd><dt>Memory</dt><dd>${esc(sv.memory_limit)}</dd>
         <dt>ZIP support</dt><dd>${sv.zip ? 'Yes' : '<span style="color:var(--red)">Missing — enable the zip extension in cPanel → Select PHP Version</span>'}</dd>
-        <dt>Storage</dt><dd>${sv.storage_writable ? 'Writable' : '<span style="color:var(--red)">Not writable — check folder permissions</span>'}</dd></dl></div></div>
+        <dt>Storage</dt><dd>${sv.storage_writable ? 'Writable' : '<span style="color:var(--red)">Not writable — check folder permissions</span>'}<div class="mono small" style="word-break:break-all">${esc(sv.storage_path)}</div>${sv.storage_public ? '<div class="small" style="color:var(--amber)">Inside the website folder — protected by .htaccess, but safer outside public_html.</div>' : '<div class="small muted">Outside the website folder — files can only be reached through the platform.</div>'}</dd></dl></div></div>
     </div>`;
+  const totoStatus = async () => {
+    const t = await api('admin.ai_status');
+    $('#totoStat').textContent = t.on ? 'On' : 'Off';
+    $('#totoIdx').innerHTML = `${t.indexed} of ${t.total} documents read${t.indexed && t.up_to_date < t.indexed ? ` (${t.indexed - t.up_to_date} out of date)` : ''} · key points for ${t.summaries}`
+      + (t.flagged ? ` · <b style="color:var(--amber)">${plural(t.flagged, 'document looks', 'documents look')} more sensitive than its classification</b>` : '')
+      + (t.needs_rebuild ? '<br><b>Rebuild the index once</b> so Toto knows the documents uploaded before it was added.' : t.last_rebuild ? `<br>Last rebuilt ${esc(fmtDate(t.last_rebuild, true))}.` : '');
+    $('#totoRebuild').disabled = !t.on;
+  };
+  totoStatus();
+  const totoFacts = async () => {
+    const { facts } = await api('admin.ai_facts');
+    if (facts.length) $('#totoFacts').innerHTML = `<ul class="toto-facts">${facts.map((f) => `<li><span>${esc(f.fact)}<span class="faint"> — ${esc(f.name || '')}, ${esc(fmtDate(f.created_at))}</span></span><button class="mini-btn" data-fact="${f.id}" title="Make Toto forget this">${icon('x', 'sm')}</button></li>`).join('')}</ul>`;
+  };
+  totoFacts();
+  $('#totoFacts').addEventListener('click', async (e) => { const b = e.target.closest('[data-fact]'); if (!b) return; await run(api('admin.ai_fact_delete', { id: +b.dataset.fact }), 'Toto forgot it.'); totoFacts(); });
+  $('#totoRebuild').onclick = async () => {
+    const b = $('#totoRebuild'); b.disabled = true;
+    let after = 0, done = 0;
+    try {
+      for (;;) {
+        const r = await api('admin.ai_rebuild', { after });
+        done += r.done; $('#totoProg').textContent = `Reading… ${done} done, ${r.left} to go`;
+        if (!r.left) break; after = r.next;
+      }
+      $('#totoProg').textContent = `Finished — ${done} documents read.`; toast('Toto has read every document.');
+    } catch (e) { toast(e.message, 'err'); }
+    b.disabled = false; totoStatus();
+  };
+  $('#davTest').onclick = async () => {
+    const out = $('#davRes'); out.innerHTML = 'Testing…';
+    const rows = [];
+    for (const m of ['OPTIONS', 'PROPFIND', 'LOCK', 'PUT', 'UNLOCK']) {
+      let ok = false, why = '';
+      try {
+        const res = await fetch('dav/selftest/test.docx', { method: m, body: ['PUT', 'LOCK', 'PROPFIND'].includes(m) ? 'test' : undefined, credentials: 'omit', cache: 'no-store' });
+        ok = res.headers.get('X-KM-Dav') === 'ok'; why = ok ? '' : `the server answered ${res.status}`;
+      } catch (e) { why = 'blocked'; }
+      rows.push(`<div>${ok ? '✅' : '❌'} <b>${m}</b>${why ? ' — ' + esc(why) : ''}</div>`);
+    }
+    const allOk = !rows.some((x) => x.includes('❌'));
+    out.innerHTML = rows.join('') + (allOk ? '<p style="color:var(--green,#2E7D32)"><b>All good.</b> Word, Excel and PowerPoint can open and save documents from this server.</p>'
+      : '<p style="color:var(--red)"><b>Your host blocks some of these.</b> Ask hosting support to allow the WebDAV methods PROPFIND, LOCK, UNLOCK and PUT for the <code>/dav/</code> folder of this site (usually a ModSecurity rule). Until then people can still use “Download → edit → upload your copy”.</p>');
+  };
   $('#sSave').onclick = async () => {
     const out = {};
     $$('[data-k]', page).forEach((el) => { out[el.dataset.k] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value; });
@@ -2514,7 +2854,8 @@ route('/admin/settings', async (page) => {
     if (flowChanged && out.approval_workflow !== '1' && !await confirmBox('Switch off approvals? Every document still waiting for approval will be published now.', { ok: 'Switch off' })) return;
     await run(api('admin.settings_save', out), 'Settings saved.');
     Object.assign(S.settings, { site_name: out.site_name, org_name: out.org_name, welcome_text: out.welcome_text });
-    if (flowChanged) location.reload();
+    const totoChanged = (out.ai_enabled === '1') !== !!S.settings.ai;
+    if (flowChanged || totoChanged) location.reload();
   };
 });
 /* Text recognition (OCR) in the browser: makes scanned / picture-only PDFs and images searchable.
@@ -2545,7 +2886,7 @@ async function ocrWorker() {
     langPath: absUrl('assets/ocr/lang'),
     gzip: false,
     workerBlobURL: false,
-    logger: (m) => { if (OCRQ.running && m.status === 'recognizing text') OCRQ.running.pageProgress = m.progress; notifyOcr(); },
+    logger: (m) => { const j = OCRQ.current || OCRQ.running; if (j && m.status === 'recognizing text') j.pageProgress = m.progress; notifyOcr(); },
   });
   // Automatic page layout (3). The library default (6, "one block of text") can skip rows in tables.
   await OCRQ.worker.setParameters({ tessedit_pageseg_mode: '3', preserve_interword_spaces: '1' });
@@ -2572,11 +2913,12 @@ async function imageToCanvas(blob, maxSide = 3600) {
 
 /**
  * Reads the text of a file. PDFs: pages that already contain real text keep it; picture-only pages are recognised.
- * Returns { text, pages, ranPages, confidence }.
+ * Returns { text, pages, ranPages, confidence, partial }. maxPages: stop after that many pages (a quick look for Toto).
  */
-async function recogniseFile(blob, ext, job) {
+async function recogniseFile(blob, ext, job, { maxPages = 0 } = {}) {
   ext = String(ext).toLowerCase();
   const worker = await ocrWorker();
+  OCRQ.current = job;
   if (ext !== 'pdf') {
     job.pages = 1; job.page = 1; notifyOcr();
     const { data } = await worker.recognize(await imageToCanvas(blob));
@@ -2584,9 +2926,11 @@ async function recogniseFile(blob, ext, job) {
   }
   const lib = await pdfLib();
   const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()), isEvalSupported: false }).promise;
-  job.pages = pdf.numPages; notifyOcr();
+  const last = maxPages ? Math.min(maxPages, pdf.numPages) : pdf.numPages;
+  job.pages = last; notifyOcr();
   const parts = []; let ran = 0, confSum = 0;
-  for (let n = 1; n <= pdf.numPages; n++) {
+  for (let n = 1; n <= last; n++) {
+    if (job.cancelled) break;
     job.page = n; job.pageProgress = 0; notifyOcr();
     const page = await pdf.getPage(n);
     const tc = await page.getTextContent();
@@ -2603,8 +2947,9 @@ async function recogniseFile(blob, ext, job) {
     ran++; confSum += data.confidence || 0;
     c.width = c.height = 0; page.cleanup();
   }
+  const total = pdf.numPages || job.pages;
   pdf.destroy();
-  return { text: parts.join('\n\n'), pages: pdf.numPages || job.pages, ranPages: ran, confidence: ran ? Math.round(confSum / ran) : 100 };
+  return { text: parts.join('\n\n'), pages: total, ranPages: ran, confidence: ran ? Math.round(confSum / ran) : 100, partial: last < total || !!job.cancelled };
 }
 
 /* ---------- Background queue ---------- */
@@ -2622,7 +2967,7 @@ function ocrJobFor(versionId) { return OCRQ.running?.versionId === versionId ? O
 async function runOcrQueue() {
   while (OCRQ.jobs.length) {
     const job = OCRQ.jobs.shift();
-    OCRQ.running = job; job.state = 'running'; notifyOcr();
+    OCRQ.running = job; OCRQ.current = null; job.state = 'running'; notifyOcr();
     try {
       let blob = job.file;
       if (!blob) {
@@ -2697,6 +3042,542 @@ route('/admin/ocr', async (page) => {
   page.querySelector('#ocrAll')?.addEventListener('click', (e) => { r.items.forEach(add); e.target.disabled = true; paint(); });
   page.addEventListener('click', (e) => { const b = e.target.closest('[data-one]'); if (b) { add(byV[+b.dataset.one]); paint(); } });
   return () => { OCRQ.listeners.delete(onJob); clearInterval(timer); };
+});
+/* Toto — the librarian character and the "Ask Toto" conversation */
+'use strict';
+
+/** Toto, drawn as an original little librarian: a round blue figure with lime glasses, a leaf sprout and a book. */
+function totoFigure(size = 150) {
+  return `<svg class="toto-fig" viewBox="0 0 160 180" width="${size}" height="${Math.round(size * 1.125)}" role="img" aria-label="Toto, the librarian">
+    <ellipse class="tf-shadow" cx="80" cy="172" rx="42" ry="6"/>
+    <g class="tf-body">
+      <g class="tf-sprout"><path d="M80 30 C80 20 82 14 86 10" class="tf-stem"/><path d="M86 10 C96 4 106 8 106 16 C96 20 90 18 86 10Z" class="tf-leaf"/><path d="M84 16 C74 8 64 12 64 20 C72 24 80 22 84 16Z" class="tf-leaf tf-leaf2"/></g>
+      <ellipse cx="62" cy="163" rx="13" ry="7" class="tf-foot"/><ellipse cx="98" cy="163" rx="13" ry="7" class="tf-foot"/>
+      <path d="M80 28 C120 28 134 62 134 100 C134 140 112 160 80 160 C48 160 26 140 26 100 C26 62 40 28 80 28Z" class="tf-skin"/>
+      <path d="M80 92 C104 92 116 108 116 128 C116 148 100 156 80 156 C60 156 44 148 44 128 C44 108 56 92 80 92Z" class="tf-belly"/>
+      <g class="tf-bow"><path d="M80 104 L66 96 L66 112 Z" class="tf-scarf"/><path d="M80 104 L94 96 L94 112 Z" class="tf-scarf"/><circle cx="80" cy="104" r="4" class="tf-knot"/></g>
+      <g class="tf-arm-l"><path d="M34 104 C22 112 22 126 34 132" class="tf-limb-o"/><path d="M34 104 C22 112 22 126 34 132" class="tf-limb"/>
+        <g class="tf-book"><rect x="26" y="120" width="30" height="22" rx="3" transform="rotate(-12 41 131)" class="tf-cover"/><rect x="30" y="123" width="23" height="16" rx="1.5" transform="rotate(-12 41 131)" class="tf-pages"/><path d="M41 122 L42 141" transform="rotate(-12 41 131)" class="tf-spine"/></g></g>
+      <g class="tf-arm-r"><path d="M124 100 C140 94 150 80 152 64" class="tf-limb-o"/><path d="M124 100 C140 94 150 80 152 64" class="tf-limb"/><circle cx="152" cy="58" r="9.5" class="tf-hand"/>
+        <path d="M146 50 l-3 -6 M152 48 v-7 M158 50 l3 -6" class="tf-fingers"/></g>
+      <g class="tf-face">
+        <circle cx="62" cy="68" r="15" class="tf-eyewhite"/><circle cx="98" cy="68" r="15" class="tf-eyewhite"/>
+        <g class="tf-pupils"><circle cx="64" cy="70" r="6.5" class="tf-pupil"/><circle cx="100" cy="70" r="6.5" class="tf-pupil"/><circle cx="66" cy="67" r="2" class="tf-glint"/><circle cx="102" cy="67" r="2" class="tf-glint"/></g>
+        <g class="tf-lids"><rect x="45" y="50" width="34" height="0" class="tf-lid"/><rect x="81" y="50" width="34" height="0" class="tf-lid"/></g>
+        <circle cx="62" cy="68" r="17" class="tf-glasses"/><circle cx="98" cy="68" r="17" class="tf-glasses"/><path d="M79 66 Q80 62 81 66" class="tf-glasses"/>
+        <path d="M54 46 Q62 42 70 46" class="tf-brow tf-brow-l"/><path d="M90 46 Q98 42 106 46" class="tf-brow tf-brow-r"/>
+        <ellipse cx="48" cy="88" rx="7" ry="4" class="tf-cheek"/><ellipse cx="112" cy="88" rx="7" ry="4" class="tf-cheek"/>
+        <path d="M68 88 Q80 100 92 88" class="tf-mouth tf-smile"/><path d="M70 92 Q80 86 90 92" class="tf-mouth tf-frown"/><ellipse cx="80" cy="91" rx="5" ry="4" class="tf-mouth-o"/>
+      </g>
+    </g>
+    <g class="tf-steam"><path d="M30 34 q-6 -8 0 -14 q6 -6 0 -14"/><path d="M130 34 q6 -8 0 -14 q-6 -6 0 -14"/></g>
+    <g class="tf-cup"><path d="M108 132 h22 v10 a11 11 0 0 1 -22 0z"/><path d="M130 135 a5 5 0 0 1 0 9" fill="none"/><path d="M114 126 q-3 -4 0 -8 M122 126 q-3 -4 0 -8" class="tf-cupsteam"/></g>
+    <g class="tf-zz"><text x="118" y="24">z</text><text x="130" y="12">Z</text></g>
+    <g class="tf-think"><circle cx="128" cy="28" r="4"/><circle cx="140" cy="18" r="5.5"/><circle cx="154" cy="8" r="7"/></g>
+  </svg>`;
+}
+
+const TOTO_STATE_CLASSES = ['is-wave', 'is-think', 'is-happy', 'is-sorry', 'is-talk', 'is-grumpy', 'is-dance', 'is-wink', 'is-yawn', 'is-sleep'];
+function totoMood(el, mood, ms = 0) {
+  if (!el) return;
+  el.classList.remove(...TOTO_STATE_CLASSES);
+  if (mood) { void el.offsetWidth; el.classList.add('is-' + mood); }
+  clearTimeout(el._moodT);
+  if (ms) el._moodT = setTimeout(() => el.classList.remove('is-' + mood), ms);
+}
+
+/** Light formatting for Toto's replies: **bold** and *emphasis*, everything else escaped. */
+function totoText(s) {
+  return esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*]+)\*/g, '$1<i>$2</i>');
+}
+function totoQuote(text, words) {
+  // highlight on the raw text, escaping every piece separately (never run patterns over escaped HTML)
+  const ws = (words || []).filter((w) => w && w.length > 1).sort((a, b) => b.length - a.length).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!ws.length) return esc(text);
+  const rx = new RegExp('((?:' + ws.join('|') + ')[\\p{L}]*)', 'giu');
+  return String(text).split(rx).map((part, i) => (i % 2 ? `<mark>${esc(part)}</mark>` : esc(part))).join('');
+}
+
+/* ---------------- Toto's voice (built into the browser: no service, no cost) ---------------- */
+const TOTO_VOICE = {
+  listening: false, rec: null, voice: null,
+  canSpeak: () => 'speechSynthesis' in window,
+  canListen: () => !!(window.SpeechRecognition || window.webkitSpeechRecognition) && S.settings.voice_input !== false,
+  on() { try { return localStorage.getItem('toto-voice') === '1'; } catch (e) { return false; } },
+  set(v) { try { localStorage.setItem('toto-voice', v ? '1' : '0'); } catch (e) {} },
+  noticeShown() { try { const s = localStorage.getItem('toto-mic-notice') === '1'; localStorage.setItem('toto-mic-notice', '1'); return s; } catch (e) { return true; } },
+  pick() {
+    // prefer a voice that runs on this computer, in English; a lighter, friendly one if there is a choice
+    const vs = speechSynthesis.getVoices(); if (!vs.length) return null;
+    const en = vs.filter((v) => /^en/i.test(v.lang));
+    const pool = en.length ? en : vs;
+    const score = (v) => (v.localService ? 4 : 0) + (/en-(GB|KE|ZA|IE|AU)/i.test(v.lang) ? 1 : 0) + (/natural|neural|online/i.test(v.name) ? 2 : 0) + (/female|zira|libby|sonia|aria|jenny|hazel|susan|samantha|serena/i.test(v.name) ? 1 : 0);
+    return pool.slice().sort((a, b) => score(b) - score(a))[0];
+  },
+  say(text, fig) {
+    if (!this.canSpeak() || !text) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text.slice(0, 700));
+    this.voice = this.voice || this.pick();
+    if (this.voice) { u.voice = this.voice; u.lang = this.voice.lang; }
+    u.rate = 1.03; u.pitch = 1.25;   // a little higher: Toto is small
+    u.onstart = () => fig?.classList.add('is-talking');
+    u.onend = u.onerror = () => fig?.classList.remove('is-talking');
+    u.onboundary = () => { if (!fig) return; fig.classList.remove('blab'); void fig.offsetWidth; fig.classList.add('blab'); };
+    speechSynthesis.speak(u);
+  },
+  stop(fig) { if (this.canSpeak()) speechSynthesis.cancel(); fig?.classList.remove('is-talking'); },
+  listen({ onText, onDone, onError }) {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new SR(); this.rec = r; this.listening = true;
+    r.lang = /^en/i.test(navigator.language) ? navigator.language : 'en-GB';
+    r.interimResults = true; r.maxAlternatives = 1; r.continuous = false;
+    let finalText = '';
+    r.onresult = (e) => { let t = ''; for (const res of e.results) t += res[0].transcript; if (e.results[e.results.length - 1].isFinal) finalText = t; onText(t); };
+    r.onerror = (e) => {
+      this.listening = false;
+      onError(e.error === 'not-allowed' || e.error === 'service-not-allowed' ? 'I need permission to use the microphone — allow it in the address bar. 🎙️'
+        : e.error === 'no-speech' ? 'I didn’t hear anything. Try again? 🙉' : e.error === 'network' ? 'Voice needs an internet connection in this browser. You can still type. ⌨️' : 'The microphone didn’t work this time. You can still type. ⌨️');
+    };
+    r.onend = () => { if (!this.listening) return; this.listening = false; onDone(finalText || ''); };
+    try { r.start(); } catch (e) { this.listening = false; onError('The microphone is busy. Try again in a moment.'); }
+  },
+  stopListening() { try { this.rec?.stop(); } catch (e) {} },
+};
+if ('speechSynthesis' in window) { speechSynthesis.onvoiceschanged = () => { TOTO_VOICE.voice = null; }; window.addEventListener('hashchange', () => { speechSynthesis.cancel(); TOTO_VOICE.stopListening(); }); }
+
+/** What Toto reads aloud: the gist, not every chip and link. */
+function totoSpeech(r) {
+  const clean = (x) => String(x || '').replace(/\*\*|\*/g, '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\u{200D}]/gu, '').replace(/[•→]/g, '').replace(/\s+/g, ' ').trim();
+  const parts = (r.reply || []).map(clean);
+  if (r.passage) parts.push(clean(r.passage.text));
+  if (r.steps?.length) r.steps.slice(0, 5).forEach((x, i) => parts.push(`Step ${i + 1}. ${clean(x)}`));
+  if (r.reply2) parts.push(clean(r.reply2));
+  return parts.filter(Boolean).join(' ').replace(/\(([A-Z]{2,}[-A-Z0-9]*), v([\d.]+)\)/g, ', number $1, version $2,');
+}
+
+const chat1 = (xs) => xs[Math.floor(Math.random() * xs.length)];
+/** Toto's one-liner above the conversation, matching his mood. */
+function totoLine(r, mood) {
+  if (mood === 'grumpy') return chat1(['Hmph. 😤', 'I’m not angry. I’m just… organising my feelings. 😑', 'My glasses are steaming. 😠']);
+  if (r.intent === 'help') return 'Here’s how — step by step below. 👇';
+  if (r.intent === 'chat' && mood === 'sorry' && (r.chat?.annoy || 0) > 0) return chat1(['That stung a little. 😕', 'Hmm. 😑', 'I’m trying, you know…']);
+  if (r.intent === 'chat') return mood === 'dance' ? chat1(['Hehe! 😄', '💃🕺', 'I’m on a roll today!']) : mood === 'wink' ? chat1(['😉', 'Your move!', 'Think carefully… 🤔']) : mood === 'sorry' ? 'I’m here for you. 💙' : chat1(['🙂', 'Anything else?', 'I’m enjoying this chat!']);
+  if (r.total) return r.passage ? 'Found it — the answer is quoted below.' : `I found ${r.total === 1 ? 'one' : r.total} for you.`;
+  return "Hmm, I couldn't find that one.";
+}
+
+/* ---------------- Ask Toto ---------------- */
+// the conversation is kept for this tab and this person only (another person signing in on the same tab never sees it)
+const TOTO_CHAT = { msgs: [], ctx: null, chat: null, uid: null };
+const totoKey = () => 'toto-chat-' + (S.user?.id || 0);
+function totoLoad() {
+  if (TOTO_CHAT.uid === S.user?.id) return;
+  Object.assign(TOTO_CHAT, { msgs: [], ctx: null, chat: null, uid: S.user?.id });
+  try { const saved = JSON.parse(sessionStorage.getItem(totoKey()) || 'null'); if (saved && Array.isArray(saved.msgs)) { TOTO_CHAT.msgs = saved.msgs; TOTO_CHAT.ctx = saved.ctx || null; TOTO_CHAT.chat = saved.chat || null; } } catch (e) {}
+}
+const totoSave = () => { try { sessionStorage.setItem(totoKey(), JSON.stringify({ msgs: TOTO_CHAT.msgs.slice(-30), ctx: TOTO_CHAT.ctx, chat: TOTO_CHAT.chat })); } catch (e) {} };
+function totoForget() { try { Object.keys(sessionStorage).filter((k) => k.startsWith('toto-chat-')).forEach((k) => sessionStorage.removeItem(k)); } catch (e) {} Object.assign(TOTO_CHAT, { msgs: [], ctx: null, chat: null, uid: null }); }
+
+route('/ask', async (page, _, params) => {
+  setTitle('Ask Toto');
+  // every visit starts a fresh, tidy conversation
+  Object.assign(TOTO_CHAT, { msgs: [], ctx: null, chat: null, uid: S.user?.id });
+  try { sessionStorage.removeItem(totoKey()); } catch (e) {}
+  if (!S.settings.ai) { location.hash = '#/search' + (params.q ? '?q=' + encodeURIComponent(params.q) : ''); return; }
+  const first = (S.user.name || '').split(' ')[0];
+  page.innerHTML = `
+    <div class="ask">
+      <div class="ask-stage">
+        <div class="ask-toto is-enter" id="totoFig">${totoFigure(150)}</div>
+        <div class="ask-hello"><div class="bubble" id="totoHello"></div>
+          <div class="ask-alt small"><a href="#/search">Prefer the classic search with filters?</a></div></div>
+      </div>
+      <div class="ask-log" id="askLog" aria-live="polite"></div>
+      <form class="ask-bar" id="askForm" autocomplete="off">
+        ${TOTO_VOICE.canListen() ? `<button class="mini-btn ask-mic" type="button" id="askMic" title="Talk to Toto (hold a normal conversation — he listens until you pause)">${icon('mic')}</button>` : ''}
+        <input class="input" id="askQ" placeholder="Ask Toto… e.g. where is the latest hydrotest procedure?" aria-label="Ask Toto" maxlength="400">
+        ${TOTO_VOICE.canSpeak() ? `<button class="mini-btn ask-spk ${TOTO_VOICE.on() ? 'on' : ''}" type="button" id="askSpk" title="Toto speaks his answers">${icon(TOTO_VOICE.on() ? 'volume' : 'mute')}</button>` : ''}
+        <button class="btn primary" type="submit" id="askGo">${icon('send', 'sm')}Ask</button>
+        ${TOTO_CHAT.msgs.length ? `<button class="btn ghost" type="button" id="askNew" title="Start a new conversation">${icon('undo', 'sm')}New</button>` : ''}
+      </form>
+    </div>`;
+  const fig = $('#totoFig'), log = $('#askLog'), input = $('#askQ'), hello = $('#totoHello');
+  const greet = TOTO_CHAT.msgs.length ? `Welcome back, ${first}! Carry on, or ask me something new.`
+    : `Hi ${first}! I'm Toto, your librarian. Tell me what you're looking for — the way you'd ask a colleague.`;
+  // the hello appears letter by letter while Toto waves
+  setTimeout(() => totoMood(fig, 'wave', 2600), 450);
+  let i = 0; const typer = setInterval(() => { hello.textContent = greet.slice(0, ++i); if (i >= greet.length) clearInterval(typer); }, 18);
+  setTimeout(() => fig.classList.remove('is-enter'), 900);
+
+  // bring the latest question (and the reply under it) up to just below Toto, like any chat app
+  const scroll = () => requestAnimationFrame(() => {
+    const mine = log.querySelectorAll('.msg.me'); const target = mine[mine.length - 1] || log.lastElementChild; if (!target) return;
+    const stage = page.querySelector('.ask-stage');
+    const offset = (stage ? stage.getBoundingClientRect().bottom : 160) + 8;
+    const y = window.scrollY + target.getBoundingClientRect().top - offset;
+    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  });
+  const userBubble = (q) => `<div class="msg me"><div class="bubble">${esc(q)}</div>${avatar(S.user.name)}</div>`;
+  const totoBubble = (r) => {
+    const passage = r.passage ? `<blockquote class="ask-quote">${totoMark()}<div><p>“${totoQuote(r.passage.text, r.passage.words)}”</p>
+        <a href="#/doc/${r.passage.doc_id}">${esc(r.passage.title)}${r.passage.doc_number ? ` · <span class="mono">${esc(r.passage.doc_number)}</span>` : ''}${r.passage.version ? ` · v${esc(r.passage.version)}` : ''} →</a></div></blockquote>` : '';
+    const docs = r.docs?.length ? `<div class="ask-docs">${r.docs.map((d) => `<a class="ask-doc" href="#/doc/${d.id}">${fileIcon(d.ext, 'sm')}<div style="min-width:0"><div class="t">${esc(d.title)}</div>
+        <div class="s">${esc([d.doc_number, d.content_type, d.library].filter(Boolean).join(' · '))} · ${esc(fmtDate(d.modified))}</div>
+        ${d.why?.length ? `<div class="why">${d.why.map((w) => `<span>${esc(w)}</span>`).join('')}</div>` : ''}</div>${d.version ? revDelta(d.version, d.status === 'published' ? 'pub' : '') : ''}</a>`).join('')}</div>` : '';
+    const more = r.total > (r.docs?.length || 0) && r.search_q ? `<a class="small" href="#/search?q=${encodeURIComponent(r.search_q)}">See all ${r.total} in the classic search →</a>` : '';
+    const chips = r.chips?.length ? `<div class="ask-chips"><span class="faint small">I understood:</span>${r.chips.map((c, j) => `<button type="button" class="chip ghost" data-rm="${j}" title="Search again without this">${esc(c.label)}${icon('x', 'sm')}</button>`).join('')}</div>` : '';
+    const expert = r.expert ? `<div class="ask-expert">${avatar(r.expert.name)}<div><b>Ask ${esc(r.expert.name)}</b><span class="small muted">${esc(r.expert.job_title || r.expert.department || '')} — ${esc(r.expert.why)}.</span>
+        <div class="small"><a href="#/person/${r.expert.id}">View profile</a>${r.expert.email ? ` · <a href="mailto:${esc(r.expert.email)}">${esc(r.expert.email)}</a>` : ''}</div></div></div>` : '';
+    const sugg = r.suggest?.length ? `<div class="ask-sugg">${r.suggest.map((s) => `<button type="button" class="chip add" data-ask="${esc(s)}">${esc(s)}</button>`).join('')}</div>` : '';
+    const steps = r.steps?.length ? `<ol class="ask-steps">${r.steps.map((x) => `<li>${totoText(x)}</li>`).join('')}</ol>` : '';
+    const acts = r.actions?.length ? `<div class="btn-row">${r.actions.map((x, j) => `<button type="button" class="btn sm" data-act-i="${j}">${icon(x.run === 'upload' ? 'upload' : 'arrow', 'sm')}${esc(x.label)}</button>`).join('')}</div>` : '';
+    return `<div class="msg toto"><span class="toto-avatar">${totoMark()}</span><div class="bubble">${(r.reply || []).map((p) => `<p>${totoText(p)}</p>`).join('')}${steps}${acts}${passage}${r.reply2 ? `<p>${totoText(r.reply2)}</p>` : ''}${docs}${more}${chips}${expert}${sugg}</div></div>`;
+  };
+  const paint = () => {
+    page.querySelector('.ask')?.classList.toggle('chatting', TOTO_CHAT.msgs.length > 0);
+    log.innerHTML = TOTO_CHAT.msgs.map((m, j) => (m.who === 'me' ? userBubble(m.q) : totoBubble(m.r).replace('<div class="msg toto">', `<div class="msg toto" data-m="${j}">`))).join('')
+      || `<div class="ask-start"><span class="faint small">Try asking:</span>${['Where is the latest hydrotest procedure?', 'How many drawings were added this month?', 'Which documents are overdue for review?', 'Who owns the fire & gas philosophy?', 'Show me my documents from last week']
+        .map((s) => `<button type="button" class="chip add" data-ask="${esc(s)}">${esc(s)}</button>`).join('')}</div>`;
+  };
+  paint();
+  if (TOTO_CHAT.msgs.length) setTimeout(scroll, 50);
+
+  let busy = false;
+  const ask = async (q, remove = null, ctxOverride) => {
+    if (busy) return; busy = true;
+    if (q) TOTO_CHAT.msgs.push({ who: 'me', q });
+    paint();
+    log.insertAdjacentHTML('beforeend', `<div class="msg toto thinking"><span class="toto-avatar">${totoMark()}</span><div class="bubble"><span class="dots"><i></i><i></i><i></i></span> <span class="faint small">Toto is looking on the shelves…</span></div></div>`);
+    scroll();
+    totoMood(fig, 'think');
+    try {
+      const t0 = Date.now();
+      const r = await api('search.ask', { q: q || '', context: ctxOverride !== undefined ? ctxOverride : TOTO_CHAT.ctx, remove: remove || [], chat: TOTO_CHAT.chat });
+      // a person takes a moment to reply — a little longer for longer answers
+      const words = (r.reply || []).join(' ').split(/\s+/).length + (r.steps || []).join(' ').split(/\s+/).length;
+      await new Promise((ok) => setTimeout(ok, Math.max(0, Math.min(1400, 380 + words * 14) - (Date.now() - t0))));
+      TOTO_CHAT.ctx = r.context || TOTO_CHAT.ctx;
+      if (r.chat) TOTO_CHAT.chat = r.chat;
+      TOTO_CHAT.msgs.push({ who: 'toto', r });
+      totoSave();
+      paint(); scroll();
+      const mood = r.mood || (r.total ? 'happy' : 'sorry');
+      totoMood(fig, mood, mood === 'grumpy' ? 0 : 2600);
+      hello.textContent = totoLine(r, mood);
+      if (r.lock) teaBreak(r.lock);
+      if (TOTO_VOICE.on()) TOTO_VOICE.say(totoSpeech(r), fig);
+    } catch (e) {
+      log.querySelector('.thinking')?.remove();
+      totoMood(fig, 'sorry', 2000);
+      toast(e.message, 'err');
+    }
+    busy = false;
+    $('#askNew') || $('#askForm').insertAdjacentHTML('beforeend', `<button class="btn ghost" type="button" id="askNew" title="Start a new conversation">${icon('undo', 'sm')}New</button>`);
+  };
+
+  $('#askForm').addEventListener('submit', (e) => { e.preventDefault(); const q = input.value.trim(); if (!q) return; input.value = ''; ask(q); });
+  page.addEventListener('click', (e) => {
+    const a = e.target.closest('[data-ask]'); if (a) { ask(a.dataset.ask); return; }
+    const ac = e.target.closest('[data-act-i]');
+    if (ac) {
+      const m = TOTO_CHAT.msgs[+ac.closest('[data-m]').dataset.m]; const x = m?.r?.actions?.[+ac.dataset.actI]; if (!x) return;
+      if (x.run === 'upload') openUpload({});
+      else if (x.run === 'theme') $('[data-act="theme"]')?.click();
+      else if (x.href && /^#\/[\w\/?=&-]*$/.test(x.href)) go(x.href);
+      return;
+    }
+    const rm = e.target.closest('[data-rm]');
+    if (rm) {   // re-run that answer without one of the things Toto understood
+      const host = rm.closest('[data-m]'); const m = TOTO_CHAT.msgs[+host.dataset.m]; const chip = m?.r?.chips?.[+rm.dataset.rm];
+      if (chip) ask('', [{ k: chip.k, v: chip.v }], m.r.context);
+      return;
+    }
+    if (e.target.closest('#askNew')) { TOTO_VOICE.stop(fig); TOTO_CHAT.msgs = []; TOTO_CHAT.ctx = null; TOTO_CHAT.chat = null; totoSave(); paint(); e.target.closest('#askNew').remove(); hello.textContent = `Fresh start, ${first}. What are you looking for?`; totoMood(fig, 'wave', 2400); input.focus(); }
+  });
+  // poke Toto: ticklish at first, then less amused
+  let pokes = [], idleT = null, idleN = 0;
+  fig.addEventListener('click', () => {
+    const now = Date.now(); pokes = pokes.filter((t) => now - t < 6000); pokes.push(now);
+    const n = pokes.length;
+    if (n <= 2) { totoMood(fig, 'dance', 1600); hello.textContent = chat1(['Hehe, that tickles! 😆', 'Boop! 👉👈', 'Hi again! 👋']); }
+    else if (n <= 4) { totoMood(fig, 'wink', 1600); hello.textContent = chat1(['Okay, okay, I’m awake! 😅', 'That’s enough poking, thank you. 🙃']); }
+    else {
+      totoMood(fig, 'grumpy');
+      hello.textContent = chat1(['Stop poking me! 😠 I’m trying to work here.', 'Do I poke YOU while you’re working? 😤']);
+      TOTO_CHAT.chat = Object.assign({}, TOTO_CHAT.chat, { annoy: Math.min(4, ((TOTO_CHAT.chat || {}).annoy || 0) + 1) }); totoSave();
+      if (n >= 8) { pokes = []; teaBreak(8, 'That’s it — tea break. ☕ Poke me again in a minute.'); }
+    }
+  });
+  // nobody talking for a while: Toto gets bored, then sleepy
+  const idle = () => {
+    clearTimeout(idleT);
+    idleT = setTimeout(() => {
+      if (!document.body.contains(fig) || fig.classList.contains('is-grumpy')) return;
+      idleN++;
+      if (idleN === 1) { totoMood(fig, 'yawn', 3000); hello.textContent = `*yawns* … still there, ${first}? 😴`; idle(); }
+      else if (idleN === 2) { totoMood(fig, 'sleep'); hello.textContent = 'Zzz… (type something to wake me up)'; }
+    }, idleN ? 120000 : 60000);
+  };
+  const wake = () => { if (fig.classList.contains('is-sleep')) { totoMood(fig, 'wave', 2000); hello.textContent = `Oh! I’m awake, I’m awake! 😳 What do you need, ${first}?`; } idleN = 0; idle(); };
+  input.addEventListener('input', wake); input.addEventListener('focus', wake);
+  idle();
+  function teaBreak(sec, line) {
+    const go = $('#askGo'); input.disabled = true; go.disabled = true;
+    fig.classList.add('is-tea'); totoMood(fig, 'grumpy');
+    if (line) hello.textContent = line;
+    let left = sec;
+    const tick = () => {
+      if (!document.body.contains(input)) return;
+      input.placeholder = `Toto is on a tea break ☕ … ${left}s`;
+      if (left-- <= 0) {
+        input.disabled = false; go.disabled = false; input.placeholder = 'Ask Toto… e.g. where is the latest hydrotest procedure?';
+        fig.classList.remove('is-tea'); totoMood(fig, 'wave', 2400);
+        hello.textContent = chat1(['Okay, I’m back. Tea helps. 😌 Where were we?', 'Back! Feeling much calmer now. ☕✨', `Right, ${first}. Fresh start? 🙂`]);
+        input.focus(); return;
+      }
+      setTimeout(tick, 1000);
+    };
+    tick();
+  }
+  // voice: Toto listens (microphone) and talks back (speaker)
+  $('#askSpk')?.addEventListener('click', (e) => {
+    const on = !TOTO_VOICE.on(); TOTO_VOICE.set(on);
+    const b = e.currentTarget; b.classList.toggle('on', on); b.innerHTML = icon(on ? 'volume' : 'mute');
+    if (on) TOTO_VOICE.say(chat1([`Hello ${first}! I can talk now.`, 'Testing, testing… can you hear me?', `Hi ${first}, my voice is on.`]), fig);
+    else TOTO_VOICE.stop(fig);
+  });
+  $('#askMic')?.addEventListener('click', () => {
+    if (TOTO_VOICE.listening) { TOTO_VOICE.stopListening(); return; }
+    TOTO_VOICE.stop(fig);
+    if (!TOTO_VOICE.noticeShown()) hello.textContent = 'Listening… 🎙️ (your browser turns speech into text — then I take it from here)';
+    else hello.textContent = chat1(['I’m all ears! 👂', 'Go ahead, I’m listening… 🎙️', 'Speak up, I’m listening!']);
+    fig.classList.add('is-listen');
+    $('#askMic').classList.add('rec');
+    TOTO_VOICE.listen({
+      onText: (t) => { input.value = t; },
+      onDone: (t) => { fig.classList.remove('is-listen'); $('#askMic')?.classList.remove('rec'); if (t && t.trim()) { input.value = ''; ask(t.trim()); } else hello.textContent = 'I didn’t catch that — try again? 🙉'; },
+      onError: (msg) => { fig.classList.remove('is-listen'); $('#askMic')?.classList.remove('rec'); hello.textContent = msg; },
+    });
+  });
+  input.focus();
+  if (params.q) ask(params.q);
+});
+/* Knowledge map: who knows what, how topics connect, which documents belong together */
+'use strict';
+
+route('/map', async (page, _, params) => {
+  setTitle('Knowledge map');
+  let mode = params.mode === 'docs' ? 'docs' : 'topics';
+  let lib = +params.lib || 0;
+  page.innerHTML = `
+    <div class="page-h"><div><h1>Knowledge map</h1><p class="muted">Who knows what, how subjects connect, and which documents belong together — drawn from everything you can open.</p></div></div>
+    <div class="km-bar">
+      <div class="seg" id="kmMode"><button data-m="topics">${icon('users', 'sm')}Topics &amp; experts</button><button data-m="docs">${icon('file', 'sm')}Documents</button></div>
+      <select class="input" id="kmLib" style="max-width:240px"><option value="0">All libraries</option></select>
+      <div class="km-find"><input class="input" id="kmFind" placeholder="Find a topic, person or document…"></div>
+      <span class="faint small" id="kmInfo"></span>
+    </div>
+    <div class="km-wrap">
+      <div class="km-stage" id="kmStage"><svg id="kmSvg" class="km-svg"><g id="kmView"><g id="kmEdges"></g><g id="kmNodes"></g></g></svg>
+        <div class="km-legend" id="kmLegend"></div>
+        <div class="km-zoom"><button class="mini-btn" data-z="in" title="Zoom in">${icon('plus', 'sm')}</button><button class="mini-btn" data-z="out" title="Zoom out">−</button><button class="mini-btn" data-z="fit" title="Fit to screen">${icon('grid', 'sm')}</button></div>
+        <div class="km-empty hidden" id="kmEmpty"></div>
+      </div>
+      <aside class="km-side" id="kmSide"></aside>
+    </div>`;
+  const svg = $('#kmSvg'), view = $('#kmView'), gE = $('#kmEdges'), gN = $('#kmNodes'), side = $('#kmSide'), stage = $('#kmStage');
+  const NS = 'http://www.w3.org/2000/svg';
+  let data = null, nodes = [], edges = [], byId = {}, adj = {}, raf = 0, alpha = 1, sel = null;
+  let tx = 0, ty = 0, k = 1;
+  const css = getComputedStyle(document.documentElement);
+  const C = { topic: '#7BAA2A', person: '#1479B8', risk: '#E5484D' };
+
+  const apply = () => { view.setAttribute('transform', `translate(${tx},${ty}) scale(${k})`); svg.classList.toggle('zoomed', k > 1.25); };
+  const fit = () => {
+    if (!nodes.length) return;
+    const W = stage.clientWidth, H = stage.clientHeight;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    nodes.forEach((n) => { x0 = Math.min(x0, n.x - n.r); y0 = Math.min(y0, n.y - n.r); x1 = Math.max(x1, n.x + n.r); y1 = Math.max(y1, n.y + n.r); });
+    k = Math.min(2.2, Math.max(0.25, Math.min(W / (x1 - x0 + 120), H / (y1 - y0 + 120))));
+    tx = W / 2 - k * (x0 + x1) / 2; ty = H / 2 - k * (y0 + y1) / 2; apply();
+  };
+
+  const showHint = () => {
+    side.innerHTML = `<div class="km-hint">${totoMark()}<div><b>How to read the map</b><p class="small muted">${mode === 'topics'
+      ? 'Green circles are <b>topics</b> (tags), blue circles are <b>people</b>. A line means that person writes or comments on that topic; bigger means more documents. A <b style="color:var(--red)">red ring</b> means only one person has ever written about that topic — knowledge at risk if they leave.'
+      : 'Each circle is a <b>document</b>, coloured by library. Lines join documents that are linked, share a tag, or that Toto found similar in meaning. Clusters are bodies of knowledge.'}
+      </p><p class="small muted">Click anything to explore it. Drag to move, scroll to zoom.</p></div></div>`;
+  };
+  const load = async () => {
+    cancelAnimationFrame(raf);
+    $('#kmMode').querySelectorAll('button').forEach((b) => b.classList.toggle('on', b.dataset.m === mode));
+    showHint();
+    data = await api('map.graph', undefined, { query: { mode, library_id: lib || '' } });
+    if (!$('#kmLib').options.length || $('#kmLib').options.length === 1) $('#kmLib').innerHTML = '<option value="0">All libraries</option>' + data.libraries.map((l) => `<option value="${l.id}" ${l.id === lib ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+    build();
+  };
+
+  const radius = (n) => n.type === 'person' ? 9 + Math.sqrt(n.count) * 4 : n.type === 'topic' ? 7 + Math.sqrt(n.count) * 5 : 6 + Math.min(10, Math.sqrt(n.count) * 1.5);
+  const build = () => {
+    nodes = data.nodes.map((n, i) => {
+      const a = (i / data.nodes.length) * Math.PI * 2, rr = 120 + Math.random() * 220;
+      return Object.assign({}, n, { x: Math.cos(a) * rr, y: Math.sin(a) * rr, vx: 0, vy: 0, r: 0 });
+    });
+    nodes.forEach((n) => { n.r = radius(n); });
+    byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+    // topic-to-topic lines only where subjects really travel together, so the map stays readable
+    const withMin = data.edges.filter((e) => e.k === 'with').length > nodes.length * 1.5 ? 2 : 1;
+    edges = data.edges.filter((e) => byId[e.s] && byId[e.t] && (e.k !== 'with' || e.w >= withMin)).map((e) => Object.assign({}, e, { a: byId[e.s], b: byId[e.t] }));
+    adj = {}; edges.forEach((e) => { (adj[e.s] = adj[e.s] || []).push(e); (adj[e.t] = adj[e.t] || []).push(e); });
+    $('#kmInfo').textContent = mode === 'topics'
+      ? `${nodes.filter((n) => n.type === 'topic').length} topics · ${nodes.filter((n) => n.type === 'person').length} people · from ${data.total_docs} documents`
+      : `${nodes.length} documents · ${edges.length} connections`;
+    const empty = !nodes.length;
+    $('#kmEmpty').classList.toggle('hidden', !empty);
+    $('#kmEmpty').innerHTML = empty ? `${totoMark()}<div><b>Nothing to map yet.</b><p class="small muted">${mode === 'topics' ? 'Topics come from tags. Tag a few documents (Toto suggests them at upload) and the map fills in.' : 'Upload a few documents and they will appear here.'}</p></div>` : '';
+    // draw
+    gE.innerHTML = ''; gN.innerHTML = '';
+    edges.forEach((e) => { const l = document.createElementNS(NS, 'line'); l.setAttribute('class', 'km-e km-e-' + e.k); l.setAttribute('stroke-width', Math.min(5, 0.7 + e.w * 0.6)); gE.appendChild(l); e.el = l; });
+    nodes.forEach((n) => {
+      const g = document.createElementNS(NS, 'g'); g.setAttribute('class', `km-n km-${n.type}${n.risk ? ' km-risk' : ''}${(n.type === 'topic' && n.count < 2) || (n.type === 'doc' && nodes.length > 40) ? ' km-minor' : ''}`); g.dataset.id = n.id;
+      const fill = n.type === 'doc' ? (n.color || '#8A94A3') : C[n.type];
+      g.innerHTML = `${n.risk ? `<circle r="${n.r + 5}" class="km-ring"/>` : ''}<circle r="${n.r}" fill="${esc(fill)}"/>${n.type === 'person' ? `<text class="km-ini" dy="0.35em">${esc(initials(n.label))}</text>` : ''}<text class="km-l" dy="${n.r + 13}">${esc(n.label.length > 34 ? n.label.slice(0, 32) + '…' : n.label)}</text><title>${esc(n.label)}${n.sub ? ' — ' + esc(n.sub) : ''}</title>`;
+      gN.appendChild(g); n.el = g;
+    });
+    $('#kmLegend').innerHTML = mode === 'topics'
+      ? `<span><i style="background:${C.topic}"></i>Topic</span><span><i style="background:${C.person}"></i>Person</span><span><i class="ring"></i>Only one person knows it</span>`
+      : (() => { const used = new Set(nodes.map((n) => n.sub.split(' · ').pop())); return data.libraries.filter((l) => used.has(l.name)).map((l) => `<span><i style="background:${esc(l.color)}"></i>${esc(l.name)}</span>`).join('') + '<span><i class="dash"></i>Similar text</span>'; })();
+    alpha = 1; sel = null;
+    const t0 = performance.now();
+    for (let i = 0; i < 160; i++) tick(true);   // settle most of it before the first paint
+    draw(); fit();
+    const loop = () => { if (alpha > 0.01 && document.body.contains(svg)) { tick(); draw(); raf = requestAnimationFrame(loop); } };
+    raf = requestAnimationFrame(loop);
+    void t0;
+    if (params.focus && byId[params.focus]) select(byId[params.focus], true);
+  };
+
+  // a small force simulation: nodes push apart, lines pull together, everything drifts to the middle
+  const tick = (fast) => {
+    const n = nodes.length; if (!n) return;
+    const rep = mode === 'topics' ? 7000 : 3200;
+    for (let i = 0; i < n; i++) {
+      const a = nodes[i];
+      for (let j = i + 1; j < n; j++) {
+        const b = nodes[j]; let dx = a.x - b.x, dy = a.y - b.y; let d2 = dx * dx + dy * dy;
+        if (d2 < 0.01) { dx = Math.random() - 0.5; dy = Math.random() - 0.5; d2 = 0.5; }
+        if (d2 > 250000) continue;
+        const f = rep / d2 * alpha, d = Math.sqrt(d2);
+        const minD = a.r + b.r + 14; const push = d < minD ? (minD - d) * 0.25 : 0;
+        const fx = (dx / d) * (f + push), fy = (dy / d) * (f + push);
+        a.vx += fx; a.vy += fy; b.vx -= fx; b.vy -= fy;
+      }
+    }
+    edges.forEach((e) => {
+      const a = e.a, b = e.b, dx = b.x - a.x, dy = b.y - a.y, d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const len = (mode === 'topics' ? (e.k === 'with' ? 150 : 110) : (e.k === 'tag' ? 130 : 80)) + a.r + b.r;
+      const f = (d - len) * 0.02 * Math.min(1.5, e.k === 'with' ? e.w * 0.4 : e.w) * alpha;
+      const fx = dx / d * f, fy = dy / d * f;
+      if (!a.fixed) { a.vx += fx; a.vy += fy; } if (!b.fixed) { b.vx -= fx; b.vy -= fy; }
+    });
+    nodes.forEach((a) => {
+      a.vx -= a.x * 0.004 * alpha; a.vy -= a.y * 0.004 * alpha;
+      if (a.fixed) { a.vx = a.vy = 0; return; }
+      a.vx *= 0.55; a.vy *= 0.55; a.x += Math.max(-30, Math.min(30, a.vx)); a.y += Math.max(-30, Math.min(30, a.vy));
+    });
+    alpha *= fast ? 0.985 : 0.975;
+  };
+  const draw = () => {
+    edges.forEach((e) => { e.el.setAttribute('x1', e.a.x); e.el.setAttribute('y1', e.a.y); e.el.setAttribute('x2', e.b.x); e.el.setAttribute('y2', e.b.y); });
+    nodes.forEach((n) => n.el.setAttribute('transform', `translate(${n.x},${n.y})`));
+  };
+  const nudge = () => { if (alpha < 0.2) { alpha = 0.2; cancelAnimationFrame(raf); const loop = () => { if (alpha > 0.01 && document.body.contains(svg)) { tick(); draw(); raf = requestAnimationFrame(loop); } }; raf = requestAnimationFrame(loop); } };
+
+  /* ---- selection and the side panel ---- */
+  const docRow = (id) => { const d = data.docs[id]; if (!d) return ''; return `<a class="km-doc" href="#/doc/${d.id}">${fileIcon(d.ext, 'sm')}<span><b>${esc(d.title)}</b><span class="faint small">${esc([d.doc_number, d.library].filter(Boolean).join(' · '))}</span></span></a>`; };
+  const neighbourIds = (n) => new Set((adj[n.id] || []).map((e) => (e.s === n.id ? e.t : e.s)));
+  const select = (n, center) => {
+    sel = n;
+    const near = neighbourIds(n);
+    nodes.forEach((m) => m.el.classList.toggle('dim', m !== n && !near.has(m.id)));
+    nodes.forEach((m) => { m.el.classList.toggle('sel', m === n); m.el.classList.toggle('near', near.has(m.id)); });
+    edges.forEach((e) => e.el.classList.toggle('dim', e.s !== n.id && e.t !== n.id));
+    if (center) { const W = stage.clientWidth, H = stage.clientHeight; k = Math.max(k, 1); tx = W / 2 - k * n.x; ty = H / 2 - k * n.y; apply(); }
+    let html = '';
+    if (n.type === 'topic') {
+      const ex = n.experts || [];
+      const top = ex[0];
+      html = `<div class="km-h"><span class="km-dot" style="background:${C.topic}"></span><div><h3>${esc(n.label)}</h3><span class="faint small">${esc(n.sub || 'Topic')} · ${plural(n.count, 'document')}</span></div></div>
+        <div class="km-toto">${totoMark()}<p>${top ? `<b>${esc(top.name)}</b> is the go-to person for ${esc(n.label)} — ${top.docs} of ${n.count} document${n.count > 1 ? 's' : ''}.` : 'Nobody has written about this yet.'}
+          ${n.risk ? `<br><b style="color:var(--red)">⚠ Only ${esc(top.name.split(' ')[0])} has written about this.</b> If ${esc(top.name.split(' ')[0])} moves on, this knowledge leaves too — ask a colleague to review or co-author.` : ''}</p></div>
+        ${ex.length ? `<div class="label">Who knows it</div><div class="km-people">${ex.slice(0, 8).map((p) => `<button class="km-person" data-go="p${p.id}">${avatar(p.name)}<span>${esc(p.name)}</span><span class="faint small">${plural(p.docs, 'doc')}</span></button>`).join('')}</div>` : ''}
+        <div class="label">Documents</div><div class="km-docs">${(n.docs || []).slice(0, 15).map(docRow).join('')}</div>
+        <a class="btn sm" href="#/search?q=${encodeURIComponent('tag:"' + n.label + '"')}">${icon('search', 'sm')}Search this topic</a>`;
+    } else if (n.type === 'person') {
+      const tps = (n.topics || []).map((t) => byId['t' + t]).filter(Boolean);
+      const sole = (n.sole || []).map((t) => byId['t' + t]).filter(Boolean);
+      html = `<div class="km-h">${avatar(n.label)}<div><h3>${esc(n.label)}</h3><span class="faint small">${esc(n.sub || '')}</span></div></div>
+        <div class="km-stats"><div><b>${n.count}</b><span>documents</span></div><div><b>${n.comments || 0}</b><span>comments</span></div><div><b>${tps.length}</b><span>topics</span></div></div>
+        ${sole.length ? `<div class="km-toto risk">${totoMark()}<p><b>Knowledge only ${esc(n.label.split(' ')[0])} holds:</b> ${sole.map((t) => esc(t.label)).join(', ')}. Worth a handover note or a second author.</p></div>` : ''}
+        ${tps.length ? `<div class="label">Knows about</div><div class="chips">${tps.map((t) => `<button class="chip ${t.risk ? 'risk' : ''}" data-go="${t.id}">${esc(t.label)}</button>`).join('')}</div>` : ''}
+        <div class="label">Documents</div><div class="km-docs">${(n.docs || []).slice(0, 15).map(docRow).join('')}</div>
+        <a class="btn sm" href="#/person/${n.id.slice(1)}">${icon('user', 'sm')}Profile</a>`;
+    } else {
+      const d = data.docs[n.doc];
+      const links = (adj[n.id] || []).map((e) => ({ other: e.s === n.id ? e.t : e.s, e })).sort((a, b) => b.e.w - a.e.w);
+      html = `<div class="km-h"><span class="km-dot" style="background:${esc(n.color || '#8A94A3')}"></span><div><h3>${esc(n.label)}</h3><span class="faint small">${esc(n.sub)}</span></div></div>
+        <div class="small muted">${esc(d.content_type || 'Document')} · by ${esc(d.owner)} · ${esc(fmtDate(d.modified))}</div>
+        <a class="btn sm primary" href="#/doc/${d.id}">${icon('open', 'sm')}Open document</a>
+        ${links.length ? `<div class="label">Connected to</div><div class="km-docs">${links.slice(0, 12).map(({ other, e }) => { const o = byId[other]; return `<button class="km-doc" data-go="${other}">${fileIcon(data.docs[o.doc]?.ext || '', 'sm')}<span><b>${esc(o.label)}</b><span class="faint small">${e.k === 'similar' ? `${e.sim}% similar text` : e.k === 'link' ? 'linked' : 'shares a tag'}</span></span></button>`; }).join('')}</div>` : '<p class="small muted">Not connected to anything yet — a good candidate for tags or a related-document link.</p>'}`;
+    }
+    side.innerHTML = html + `<button class="linklike small" data-clear>Clear selection</button>`;
+  };
+  const clearSel = () => { sel = null; nodes.forEach((m) => m.el.classList.remove('dim', 'sel', 'near')); edges.forEach((e) => e.el.classList.remove('dim')); showHint(); };
+
+  /* ---- pan, zoom, drag ---- */
+  let drag = null, panning = null, moved = false;
+  const pt = (ev) => { const r = svg.getBoundingClientRect(); return { x: (ev.clientX - r.left - tx) / k, y: (ev.clientY - r.top - ty) / k }; };
+  svg.addEventListener('pointerdown', (ev) => {
+    moved = false;
+    const g = ev.target.closest('.km-n');
+    if (g) { drag = byId[g.dataset.id]; drag.fixed = true; svg.setPointerCapture(ev.pointerId); return; }
+    panning = { x: ev.clientX, y: ev.clientY, tx, ty }; svg.setPointerCapture(ev.pointerId);
+  });
+  svg.addEventListener('pointermove', (ev) => {
+    if (drag) { const p = pt(ev); drag.x = p.x; drag.y = p.y; moved = true; nudge(); draw(); }
+    else if (panning) { const dx = ev.clientX - panning.x, dy = ev.clientY - panning.y; if (Math.abs(dx) + Math.abs(dy) > 3) moved = true; tx = panning.tx + dx; ty = panning.ty + dy; apply(); }
+  });
+  svg.addEventListener('pointerup', (ev) => {
+    if (drag) { const n = drag; drag = null; if (!moved) { n.fixed = false; select(n); } return; }
+    if (panning && !moved && !ev.target.closest('.km-n')) clearSel();
+    panning = null;
+  });
+  svg.addEventListener('wheel', (ev) => {
+    ev.preventDefault();
+    const r = svg.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    const nk = Math.max(0.2, Math.min(4, k * (ev.deltaY < 0 ? 1.15 : 0.87)));
+    tx = mx - (mx - tx) * nk / k; ty = my - (my - ty) * nk / k; k = nk; apply();
+  }, { passive: false });
+  page.querySelector('.km-zoom').addEventListener('click', (e) => {
+    const z = e.target.closest('[data-z]')?.dataset.z; if (!z) return;
+    if (z === 'fit') return fit();
+    const W = stage.clientWidth / 2, H = stage.clientHeight / 2, nk = Math.max(0.2, Math.min(4, k * (z === 'in' ? 1.3 : 0.77)));
+    tx = W - (W - tx) * nk / k; ty = H - (H - ty) * nk / k; k = nk; apply();
+  });
+  side.addEventListener('click', (e) => {
+    const go = e.target.closest('[data-go]'); if (go && byId[go.dataset.go]) { e.preventDefault(); select(byId[go.dataset.go], true); return; }
+    if (e.target.closest('[data-clear]')) clearSel();
+  });
+  $('#kmMode').addEventListener('click', (e) => { const b = e.target.closest('[data-m]'); if (!b || b.dataset.m === mode) return; mode = b.dataset.m; history.replaceState(null, '', `#/map?mode=${mode}${lib ? '&lib=' + lib : ''}`); load(); });
+  $('#kmLib').addEventListener('change', (e) => { lib = +e.target.value; history.replaceState(null, '', `#/map?mode=${mode}${lib ? '&lib=' + lib : ''}`); load(); });
+  $('#kmFind').addEventListener('input', debounce((e) => {
+    const q = e.target.value.trim().toLowerCase(); if (!q) return;
+    const hit = nodes.find((n) => n.label.toLowerCase().startsWith(q)) || nodes.find((n) => n.label.toLowerCase().includes(q));
+    if (hit) select(hit, true);
+  }, 250));
+  window.addEventListener('resize', debounce(() => document.body.contains(svg) && fit(), 300));
+  await load();
 });
 'use strict';
 boot();

@@ -37,7 +37,7 @@ function api_admin_audit() {
 }
 
 const SETTING_KEYS = ['site_name', 'org_name', 'welcome_text', 'number_pattern', 'max_upload_mb', 'allowed_ext', 'recycle_days', 'session_minutes',
-    'email_notifications', 'mail_from', 'base_url', 'checkout_hours', 'mfa_policy', 'mfa_remember_days', 'approval_workflow'];
+    'email_notifications', 'mail_from', 'base_url', 'checkout_hours', 'mfa_policy', 'mfa_remember_days', 'approval_workflow', 'ai_enabled', 'ai_creator', 'ai_voice_input'];
 
 function api_admin_settings() {
     require_admin();
@@ -46,7 +46,8 @@ function api_admin_settings() {
     $s['mfa_counts'] = ['on' => (int)val('SELECT COUNT(*) FROM users WHERE active=1 AND mfa_enabled=1'), 'people' => (int)val('SELECT COUNT(*) FROM users WHERE active=1')];
     $s['server'] = ['php' => PHP_VERSION, 'upload_max_filesize' => ini_get('upload_max_filesize'), 'post_max_size' => ini_get('post_max_size'),
         'memory_limit' => ini_get('memory_limit'), 'max_execution_time' => ini_get('max_execution_time'), 'zip' => class_exists('ZipArchive'),
-        'mysql' => (string)val('SELECT VERSION()'), 'app_version' => KM_VERSION, 'storage_writable' => is_writable(storage_path('files'))];
+        'mysql' => (string)val('SELECT VERSION()'), 'app_version' => KM_VERSION, 'storage_writable' => is_writable(storage_path('files')), 'storage_path' => storage_path(),
+        'storage_public' => str_starts_with(realpath(storage_path()) ?: storage_path(), realpath(KM_ROOT) ?: KM_ROOT)];
     return ['settings' => $s];
 }
 
@@ -60,6 +61,9 @@ function api_admin_settings_save() {
         if (in_array($k, ['max_upload_mb', 'recycle_days', 'session_minutes', 'checkout_hours'], true)) $v = (string)max(1, (int)$v);
         if ($k === 'allowed_ext') $v = implode(',', array_diff(array_filter(array_map(fn($e) => preg_replace('/[^a-z0-9]/', '', strtolower(trim($e))), explode(',', $v))), BLOCKED_EXT));
         if ($k === 'email_notifications') $v = $v ? '1' : '0';
+        if ($k === 'ai_voice_input') $v = $v ? '1' : '0';
+        if ($k === 'ai_creator') { $v = trim(preg_replace('/\s+/u', ' ', strip_tags($v))); if ($v === '') $v = 'Om Khadka'; }
+        if ($k === 'ai_enabled') { $v = $v ? '1' : '0'; if ($v !== setting('ai_enabled', '1')) audit('ai_setting', 'system', null, $v === '1' ? 'Toto switched on' : 'Toto switched off'); }
         if ($k === 'approval_workflow') {
             $v = $v ? '1' : '0';
             if ($v !== setting('approval_workflow', '0')) {
@@ -80,6 +84,49 @@ function api_admin_settings_save() {
     }
     audit('settings_change', 'system');
     return ['message' => 'Settings saved.'];
+}
+
+/* ---------------- Toto (built-in document assistant) ---------------- */
+
+function api_admin_ai_facts() {
+    require_admin();
+    return ['facts' => all('SELECT f.id, f.fact, f.created_at, u.name FROM toto_facts f LEFT JOIN users u ON u.id=f.created_by ORDER BY f.id DESC LIMIT 200')];
+}
+function api_admin_ai_fact_delete() {
+    must_post();
+    require_admin();
+    $f = one('SELECT id, fact FROM toto_facts WHERE id=?', [iarg('id')]);
+    if (!$f) fail('Not found.', 404);
+    q('DELETE FROM toto_facts WHERE id=?', [$f['id']]);
+    audit('toto_forget', 'system', null, mb_substr($f['fact'], 0, 250));
+    return [];
+}
+
+function api_admin_ai_status() {
+    require_admin();
+    $total = (int)val('SELECT COUNT(*) FROM documents WHERE deleted_at IS NULL');
+    $indexed = (int)val('SELECT COUNT(*) FROM ai_index a JOIN documents d ON d.id=a.document_id WHERE d.deleted_at IS NULL');
+    $fresh = (int)val('SELECT COUNT(*) FROM ai_index a JOIN documents d ON d.id=a.document_id WHERE d.deleted_at IS NULL AND a.version_id = COALESCE(d.published_version_id, d.current_version_id)');
+    return ['on' => ai_on(), 'total' => $total, 'indexed' => $indexed, 'up_to_date' => $fresh,
+        'summaries' => (int)val('SELECT COUNT(*) FROM ai_index WHERE summary IS NOT NULL'),
+        'flagged' => (int)val("SELECT COUNT(*) FROM ai_index a JOIN documents d ON d.id=a.document_id WHERE d.deleted_at IS NULL AND a.sens_info IS NOT NULL
+            AND ((a.sens_info LIKE '%\"level\":\"restricted\"%' AND d.confidentiality <> 'restricted') OR (a.sens_info LIKE '%\"level\":\"confidential\"%' AND d.confidentiality IN ('public','internal')))"),
+        'needs_rebuild' => setting('ai_needs_rebuild', '0') === '1', 'last_rebuild' => setting('ai_last_rebuild', '')];
+}
+
+/** Rebuilds Toto's index in small batches (the page calls it until done) so shared-hosting time limits are never hit. */
+function api_admin_ai_rebuild() {
+    must_post();
+    require_admin();
+    if (!ai_on()) fail('Switch Toto on first.');
+    $after = max(0, iarg('after'));
+    if ($after === 0) { db()->exec('DELETE FROM ai_index'); db()->exec('DELETE FROM ai_df'); }
+    @set_time_limit(60);
+    $ids = array_map('intval', array_column(all('SELECT id FROM documents WHERE deleted_at IS NULL AND id > ? ORDER BY id LIMIT 25', [$after]), 'id'));
+    foreach ($ids as $id) { try { ai_index_doc($id, true); } catch (Throwable $e) { error_log('[KM] Toto rebuild #' . $id . ': ' . $e->getMessage()); } }
+    $left = $ids ? (int)val('SELECT COUNT(*) FROM documents WHERE deleted_at IS NULL AND id > ?', [end($ids)]) : 0;
+    if (!$left) { set_setting('ai_needs_rebuild', '0'); set_setting('ai_last_rebuild', now()); audit('ai_rebuild', 'system', null, 'Toto index rebuilt'); }
+    return ['done' => count($ids), 'next' => $ids ? end($ids) : 0, 'left' => $left];
 }
 
 function api_admin_stats() {

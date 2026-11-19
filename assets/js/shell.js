@@ -25,7 +25,7 @@ function renderLogin(message) {
   app().innerHTML = `<main class="login">
     <section class="login-art">
       <div class="login-brand"><span class="mark logo"><img src="assets/brand/mark.png" alt=""></span>${esc(S.settings.org_name || 'Taifa Gas Investment SEZ Limited')}</div>
-      <p class="login-quote">${esc(S.settings.site_name || 'TGISL Knowledge Hub')}<small>${esc(S.settings.welcome_text || '')}</small></p>
+      <p class="login-quote">${esc(S.settings.site_name || 'KM Platform')}<small>${esc(S.settings.welcome_text || '')}</small></p>
       ${PLANT_SVG}
     </section>
     <section class="login-form">
@@ -82,12 +82,13 @@ function renderShell() {
       <div class="side-scroll">
         <nav class="nav">
           <a href="#/" data-nav="/">${icon('home')}Home</a>
-          <a href="#/search" data-nav="/search">${icon('search')}Search</a>
+          ${S.settings.ai ? `<a href="#/ask" data-nav="/ask">${icon('search')}Search · ask Toto</a>` : `<a href="#/search" data-nav="/search">${icon('search')}Search</a>`}
           ${S.settings.approvals ? `<a href="#/approvals" data-nav="/approvals">${icon('stamp')}Approvals<span class="count hot hidden" id="cApprovals"></span></a>` : `<a href="#/my/new" data-nav="/my/new">${icon('clock')}New this week</a>`}
           <a href="#/my/favorites" data-nav="/my/favorites">${icon('star')}Favourites</a>
           <a href="#/my/mine" data-nav="/my/mine">${icon('file')}My documents</a>
           <a href="#/my/recent" data-nav="/my/recent">${icon('clock')}Recent</a>
           <a href="#/people" data-nav="/people">${icon('users')}People</a>
+          <a href="#/map" data-nav="/map">${icon('graph')}Knowledge map</a>
         </nav>
         <div class="nav-label">Libraries ${u.is_admin ? `<button title="New library" data-act="new-lib">${icon('plus', 'sm')}</button>` : ''}</div>
         <nav class="nav" id="sideLibs"></nav>
@@ -131,7 +132,7 @@ function renderShell() {
     if (act === 'upload') openUpload({});
     if (act === 'new-lib') editLibrary();
     if (act === 'theme') { localStorageSet('km-theme', isDark() ? 'light' : 'dark'); applyTheme(); a.innerHTML = icon(isDark() ? 'sun' : 'moon'); }
-    if (act === 'logout') { await api('auth.logout', {}).catch(() => {}); location.hash = ''; S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); }
+    if (act === 'logout') { totoForget(); await api('auth.logout', {}).catch(() => {}); location.hash = ''; S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); }
   });
   shell.addEventListener('click', (e) => { if (e.target === shell && shell.classList.contains('nav-open')) shell.classList.remove('nav-open'); });
 }
@@ -215,6 +216,7 @@ function openPalette(initial = '') {
     const r = await api('search.suggest', undefined, { query: { q } });
     if (input.value.trim() !== q) return;
     items = [{ group: '', html: `${icon('search')}<span class="t">Search everything for “${esc(q)}”</span><small>Enter</small>`, href: '#/search?q=' + encodeURIComponent(q) }];
+    if (S.settings.ai) items.push({ group: '', html: `${totoMark()}<span class="t">Ask Toto: “${esc(q)}”</span>`, href: '#/ask?q=' + encodeURIComponent(q) });
     r.docs.forEach((d, i) => items.push({ group: i === 0 ? 'Documents' : '', html: `${fileIcon(d.ext, 'sm')}<span class="t">${esc(d.title)}</span><small class="mono">${esc(d.doc_number || '')}</small>`, href: '#/doc/' + d.id }));
     r.terms.forEach((t, i) => items.push({ group: i === 0 ? 'Tags' : '', html: `${icon('tag')}<span class="t">${esc(t.label)}</span><small>${esc(t.termset)}</small>`, href: '#/search?terms=' + t.id }));
     r.libraries.forEach((l, i) => items.push({ group: i === 0 ? 'Libraries' : '', html: `<span class="swatch" style="width:10px;height:10px;border-radius:3px;background:${esc(l.color)};margin:0 4px"></span><span class="t">${esc(l.name)}</span>`, href: '#/lib/' + l.id }));
@@ -263,7 +265,7 @@ function forcePasswordChange() {
   };
   m.$('[data-ok]').onclick = save;
   m.$('#cp3').addEventListener('keydown', (e) => { if (e.key === 'Enter') save(); });
-  m.$('[data-out]').onclick = async () => { await api('auth.logout', {}).catch(() => {}); m.close(); S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); };
+  m.$('[data-out]').onclick = async () => { totoForget(); await api('auth.logout', {}).catch(() => {}); m.close(); S.user = null; const s = await api('auth.session'); S.csrf = s.csrf; renderLogin(); };
 }
 
 /* ---------- Boot ---------- */

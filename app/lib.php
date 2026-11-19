@@ -3,6 +3,8 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/perm.php';
+require_once __DIR__ . '/ai.php';
+require_once __DIR__ . '/input.php';
 require_once __DIR__ . '/extract.php';
 require_once __DIR__ . '/mfa.php';
 
@@ -10,11 +12,29 @@ function next_doc_number(int $libId, ?int $typeId): string {
     $lib = (string)val('SELECT code FROM libraries WHERE id=?', [$libId]);
     $type = $typeId ? (string)val('SELECT code FROM content_types WHERE id=?', [$typeId]) : 'GEN';
     $key = "$lib-$type";
-    q('INSERT INTO doc_counters (k, n) VALUES (?, 1) ON DUPLICATE KEY UPDATE n = n + 1', [$key]);
-    $n = (int)val('SELECT n FROM doc_counters WHERE k=?', [$key]);
+    // one atomic statement: LAST_INSERT_ID(expr) hands this connection its own number, even under concurrent uploads
+    q('INSERT INTO doc_counters (k, n) VALUES (?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE n = LAST_INSERT_ID(n + 1)', [$key]);
+    $n = (int)val('SELECT LAST_INSERT_ID()');
     $pattern = setting('number_pattern', 'TGISL-{LIB}-{TYPE}-{SEQ}');
-    return strtr($pattern, ['{LIB}' => $lib, '{TYPE}' => $type ?: 'GEN', '{SEQ}' => str_pad((string)$n, 4, '0', STR_PAD_LEFT),
+    $make = fn($n) => strtr($pattern, ['{LIB}' => $lib, '{TYPE}' => $type ?: 'GEN', '{SEQ}' => str_pad((string)$n, 4, '0', STR_PAD_LEFT),
         '{YYYY}' => date('Y'), '{YY}' => date('y')]);
+    // skip numbers someone already typed by hand
+    for ($i = 0; $i < 50 && doc_number_taken($make($n)); $i++) {
+        q('UPDATE doc_counters SET n = LAST_INSERT_ID(n + 1) WHERE k=?', [$key]);
+        $n = (int)val('SELECT LAST_INSERT_ID()');
+    }
+    return $make($n);
+}
+
+/** Document numbers must be unique among live documents. */
+function doc_number_taken(string $no, int $exceptId = 0): bool {
+    return (bool)val('SELECT id FROM documents WHERE doc_number=? AND id<>? AND deleted_at IS NULL LIMIT 1', [$no, $exceptId]);
+}
+
+/** A check-out held by someone else blocks changes unless the person has Full control. */
+function assert_not_checked_out(array $d, array $u, int $lv): void {
+    if ($d['checked_out_by'] && (int)$d['checked_out_by'] !== $u['id'] && $lv < LVL_FULL)
+        fail('"' . $d['title'] . '" is checked out by ' . val('SELECT name FROM users WHERE id=?', [$d['checked_out_by']]) . '. Wait until it is checked in.', 409);
 }
 
 function ver_label($major, $minor): string { return (int)$major . '.' . (int)$minor; }
@@ -70,6 +90,7 @@ function reindex_doc(int $docId): void {
     $parts = [implode(' ', array_column($meta, 'value')), implode(' ', array_map(fn($t) => $t['label'] . ' ' . $t['synonyms'], $terms)),
         (string)val('SELECT filename FROM document_versions WHERE id=?', [$d['current_version_id']]), $txt];
     update('documents', ['search_text' => mb_substr(implode("\n", $parts), 0, 600000)], 'id=?', [$docId]);
+    try { ai_index_doc($docId); } catch (Throwable $e) { error_log('[KM] Toto index: ' . $e->getMessage()); }
 }
 
 /** Suggests term ids whose label or synonyms appear in the given text (auto-classification). */
@@ -96,6 +117,7 @@ function suggest_terms(string $text, int $limit = 12): array {
 function hydrate_docs(array $rows, ?array $u = null): array {
     $u = $u ?? me();
     if (!$rows) return [];
+    preload_doc_perms(array_column($rows, 'id'));   // one query for every document's own permissions
     $out = [];
     $verIds = [];
     foreach ($rows as $r) {
@@ -188,8 +210,10 @@ function hidden_counts(?array $u = null): array {
     if (isset($cache[$u['id']])) return $cache[$u['id']];
     $out = ['lib' => [], 'folder' => [], 'total' => 0];
     if ($u['role'] !== 'admin') {
-        foreach (all('SELECT ' . DOC_COLS . " FROM documents d WHERE d.deleted_at IS NULL AND d.published_version_id IS NOT NULL
-                AND d.confidentiality IN ('confidential','restricted')") as $d) {
+        $sens = all('SELECT ' . DOC_COLS . " FROM documents d WHERE d.deleted_at IS NULL AND d.published_version_id IS NOT NULL
+                AND d.confidentiality IN ('confidential','restricted')");
+        preload_doc_perms(array_column($sens, 'id'));
+        foreach ($sens as $d) {
             if (doc_level($d, $u) >= LVL_READ) continue;
             $out['lib'][(int)$d['library_id']] = ($out['lib'][(int)$d['library_id']] ?? 0) + 1;
             if ($d['folder_id']) $out['folder'][(int)$d['folder_id']] = ($out['folder'][(int)$d['folder_id']] ?? 0) + 1;

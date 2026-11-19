@@ -97,6 +97,14 @@ header('X-Content-Type-Options: nosniff');
 header('Cache-Control: private, max-age=0');
 if ($ext === 'svg') header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
 
+// Optional hand-off to the web server (config 'xsendfile' => true, only where mod_xsendfile / LiteSpeed X-Sendfile is enabled):
+// PHP stops here and the server streams the file, keeping PHP workers free. Range requests stay with PHP.
+if (cfg('xsendfile') && !isset($_SERVER['HTTP_RANGE'])) {
+    header_remove('Content-Length');
+    header('X-Sendfile: ' . $path);
+    exit;
+}
+@set_time_limit(0);
 $fh = fopen($path, 'rb');
 fseek($fh, $start);
 $left = $end - $start + 1;

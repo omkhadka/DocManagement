@@ -14,7 +14,7 @@ start_session();
 expire_checkouts();
 $route = preg_replace('/[^a-z_.]/', '', strtolower((string)($_GET['r'] ?? '')));
 [$module, $action] = array_pad(explode('.', $route, 2), 2, '');
-$modules = ['auth', 'dash', 'libraries', 'docs', 'approvals', 'search', 'taxonomy', 'users', 'admin', 'notifications'];
+$modules = ['auth', 'dash', 'libraries', 'docs', 'approvals', 'search', 'taxonomy', 'users', 'admin', 'notifications', 'map'];
 if (!in_array($module, $modules, true)) fail('Unknown request.', 404);
 require_once KM_APP . "/api/$module.php";
 $fn = "api_{$module}_{$action}";

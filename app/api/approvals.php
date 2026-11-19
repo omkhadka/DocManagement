@@ -56,6 +56,7 @@ function api_approvals_bulk() {
     $decision = sarg('decision') === 'reject' ? 'reject' : 'approve';
     if ($decision === 'reject' && sarg('note') === '') fail('Add a note so authors know what to change.');
     $ok = 0; $errors = [];
+    db()->beginTransaction();
     foreach ($ids as $id) {
         $u = me();
         $d = one('SELECT ' . DOC_COLS . ' FROM documents d WHERE d.id=? AND d.deleted_at IS NULL', [$id]);
@@ -75,5 +76,6 @@ function api_approvals_bulk() {
         }
         $ok++;
     }
+    db()->commit();
     return ['done' => $ok, 'skipped' => count($errors)];
 }

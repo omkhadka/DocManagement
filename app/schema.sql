@@ -304,6 +304,17 @@ CREATE TABLE IF NOT EXISTS access_requests (
   decided_at DATETIME NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS auth_failures (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  ip VARCHAR(64) NOT NULL DEFAULT '',
+  user_id INT NULL,
+  email VARCHAR(190) NOT NULL DEFAULT '',
+  kind VARCHAR(16) NOT NULL DEFAULT 'password',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_af_ip (ip, created_at),
+  KEY idx_af_user (user_id, ip, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS doc_counters (
   k VARCHAR(64) PRIMARY KEY,
   n INT NOT NULL DEFAULT 0
@@ -321,4 +332,79 @@ CREATE TABLE IF NOT EXISTS mfa_devices (
   expires_at DATETIME NOT NULL,
   UNIQUE KEY uq_mfa_sel (selector),
   KEY idx_mfa_user (user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Toto, the built-in document assistant (v1.5)
+CREATE TABLE IF NOT EXISTS ai_index (
+  document_id INT PRIMARY KEY,
+  version_id INT NOT NULL,
+  text_hash CHAR(40) NOT NULL,
+  tf MEDIUMTEXT NULL,
+  vec MEDIUMTEXT NULL,
+  minhash TEXT NULL,
+  summary TEXT NULL,
+  sens_info TEXT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_upd (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS ai_df (
+  token VARCHAR(64) NOT NULL PRIMARY KEY,
+  df INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+
+CREATE TABLE IF NOT EXISTS upload_stage (
+  token CHAR(32) NOT NULL PRIMARY KEY,
+  user_id INT NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  stored_name VARCHAR(64) NOT NULL,
+  ext VARCHAR(16) NOT NULL DEFAULT '',
+  mime VARCHAR(128) NOT NULL DEFAULT '',
+  size BIGINT NOT NULL DEFAULT 0,
+  sha256 CHAR(64) NOT NULL,
+  extracted_text MEDIUMTEXT NULL,
+  ocr_text MEDIUMTEXT NULL,
+  ocr_full TINYINT(1) NOT NULL DEFAULT 0,
+  ocr_confidence TINYINT NULL,
+  ocr_pages SMALLINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_stage_user (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Toto: facts taught by administrators (v1.5.4)
+CREATE TABLE IF NOT EXISTS toto_facts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  subject VARCHAR(190) NOT NULL,
+  fact VARCHAR(600) NOT NULL,
+  created_by INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_tf_subject (subject)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Request for input: one named person edits an Office document in Word/Excel/PowerPoint (v1.7)
+CREATE TABLE IF NOT EXISTS input_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  document_id INT NOT NULL,
+  version_id INT NOT NULL,
+  requested_by INT NOT NULL,
+  assignee_id INT NOT NULL,
+  message VARCHAR(1000) NOT NULL DEFAULT '',
+  due_date DATE NULL,
+  status ENUM('open','done','cancelled','expired') NOT NULL DEFAULT 'open',
+  dav_token CHAR(40) NOT NULL,
+  work_stored_name VARCHAR(64) NULL,
+  work_size BIGINT NULL,
+  work_sha256 CHAR(64) NULL,
+  work_saved_at DATETIME NULL,
+  work_saves INT NOT NULL DEFAULT 0,
+  lock_token VARCHAR(80) NULL,
+  lock_expires DATETIME NULL,
+  result_version_id INT NULL,
+  done_comment VARCHAR(1000) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  closed_at DATETIME NULL,
+  closed_by INT NULL,
+  UNIQUE KEY uq_ir_token (dav_token),
+  KEY idx_ir_doc (document_id, status),
+  KEY idx_ir_assignee (assignee_id, status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -32,7 +32,9 @@ function api_users_profile() {
 
 function api_users_list() {
     require_admin();
-    $rows = all('SELECT u.id, u.name, u.email, u.role, u.job_title, u.phone, u.department_id, u.active, u.last_login, u.created_at, u.locked_until, u.mfa_enabled, u.mfa_enabled_at,
+    $rows = all('SELECT u.id, u.name, u.email, u.role, u.job_title, u.phone, u.department_id, u.active, u.last_login, u.created_at,
+        (SELECT DATE_ADD(MAX(f.created_at), INTERVAL 15 MINUTE) FROM auth_failures f WHERE f.user_id=u.id AND f.created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)
+            GROUP BY f.ip HAVING COUNT(*) >= 5 ORDER BY 1 DESC LIMIT 1) AS locked_until, u.mfa_enabled, u.mfa_enabled_at,
         d.name AS department, (SELECT COUNT(*) FROM documents x WHERE x.owner_id=u.id AND x.deleted_at IS NULL) AS docs
         FROM users u LEFT JOIN departments d ON d.id=u.department_id ORDER BY u.active DESC, u.name');
     $gm = [];
@@ -53,6 +55,7 @@ function api_users_save() {
     if ($id === $admin['id'] && ($data['role'] !== 'admin' || !$data['active'])) fail("You can't remove your own administrator access.");
     $pw = (string)arg('password', '');
     $temp = null;
+    db()->beginTransaction();   // person, password and groups change together or not at all
     if ($id) {
         $pwSet = false;
         if ($pw !== '') {
@@ -62,6 +65,7 @@ function api_users_save() {
                 $data['password_hash'] = password_hash($pw, PASSWORD_DEFAULT);
                 if ($id !== $admin['id']) $data['must_change_pw'] = 1; // your own password is yours: no forced change
                 $pwSet = true;
+                mfa_drop_devices($id);   // remembered browsers must pass two-step again
             }
         }
         update('users', $data, 'id=?', [$id]);
@@ -78,7 +82,8 @@ function api_users_save() {
         q('DELETE FROM group_members WHERE user_id=?', [$id]);
         foreach (array_unique(array_map('intval', arg('groups'))) as $g) if ($g) insert('group_members', ['group_id' => $g, 'user_id' => $id]);
     }
-    if (arg('unlock')) update('users', ['failed_logins' => 0, 'locked_until' => null], 'id=?', [$id]);
+    if (arg('unlock')) q('DELETE FROM auth_failures WHERE user_id=?', [$id]);
+    db()->commit();
     return ['id' => $id, 'temp_password' => $temp];
 }
 
@@ -88,7 +93,9 @@ function api_users_reset_password() {
     $id = iarg('id');
     if (!val('SELECT id FROM users WHERE id=?', [$id])) fail('Person not found.');
     $temp = substr(strtr(base64_encode(random_bytes(9)), '+/', 'Kx'), 0, 12);
-    update('users', ['password_hash' => password_hash($temp, PASSWORD_DEFAULT), 'must_change_pw' => 1, 'failed_logins' => 0, 'locked_until' => null], 'id=?', [$id]);
+    update('users', ['password_hash' => password_hash($temp, PASSWORD_DEFAULT), 'must_change_pw' => 1], 'id=?', [$id]);
+    q('DELETE FROM auth_failures WHERE user_id=?', [$id]);
+    mfa_drop_devices($id);   // a reset also forgets remembered browsers
     audit('password_reset', 'user', $id);
     return ['temp_password' => $temp];
 }
@@ -143,10 +150,12 @@ function api_users_department_delete() {
     must_post(); require_admin();
     $id = iarg('id');
     if ((int)val('SELECT COUNT(*) FROM users WHERE department_id=? AND active=1', [$id])) fail('Move the people in this department to another one first.');
+    db()->beginTransaction();
     q("DELETE FROM permissions WHERE principal_type='department' AND principal_id=?", [(string)$id]);
     q('UPDATE libraries SET department_id=NULL WHERE department_id=?', [$id]);
     q('UPDATE users SET department_id=NULL WHERE department_id=?', [$id]);
     q('DELETE FROM departments WHERE id=?', [$id]);
+    db()->commit();
     audit('department_delete', 'department', $id);
     return [];
 }
@@ -165,20 +174,24 @@ function api_users_group_save() {
     $id = iarg('id');
     $data = ['name' => sarg('name', '', 120), 'description' => sarg('description', '', 255)];
     if ($data['name'] === '') fail('Give the group a name.');
+    db()->beginTransaction();
     if ($id) update('user_groups', $data, 'id=?', [$id]); else $id = insert('user_groups', $data);
     if (is_array(arg('members'))) {
         q('DELETE FROM group_members WHERE group_id=?', [$id]);
         foreach (array_unique(array_map('intval', arg('members'))) as $m) if ($m) insert('group_members', ['group_id' => $id, 'user_id' => $m]);
     }
+    db()->commit();
     audit('group_save', 'group', $id, $data['name']);
     return ['id' => $id];
 }
 function api_users_group_delete() {
     must_post(); require_admin();
     $id = iarg('id');
+    db()->beginTransaction();
     q("DELETE FROM permissions WHERE principal_type='group' AND principal_id=?", [(string)$id]);
     q('DELETE FROM group_members WHERE group_id=?', [$id]);
     q('DELETE FROM user_groups WHERE id=?', [$id]);
+    db()->commit();
     audit('group_delete', 'group', $id);
     return [];
 }
@@ -213,7 +226,7 @@ function api_users_mfa_reset() {
     $u = one('SELECT id, name, role FROM users WHERE id=?', [$id]);
     if (!$u) fail('Person not found.', 404);
     mfa_clear($id);
-    update('users', ['failed_logins' => 0, 'locked_until' => null], 'id=?', [$id]);
+    q('DELETE FROM auth_failures WHERE user_id=?', [$id]);
     audit('mfa_reset', 'user', $id, $u['name']);
     notify([$id], 'security', 'Your two-step verification was reset', $a['name'] . ' reset it.' . (mfa_required_for_role($u['role']) ? ' You will set it up again at your next sign-in.' : ''), '#/profile');
     return ['message' => mfa_required_for_role($u['role']) ? "Reset. {$u['name']} will scan a new QR code at the next sign-in." : "Reset. Two-step verification is now off for {$u['name']}."];

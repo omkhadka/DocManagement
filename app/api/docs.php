@@ -171,6 +171,28 @@ function api_docs_get() {
         $similar = array_slice($similar, 0, 5);
     }
 
+    // Toto: similar by content, key points, and a classification check
+    $toto = ['on' => ai_on(), 'summary' => [], 'sensitive' => null];
+    if (ai_on()) {
+        try {
+            if (!one('SELECT 1 FROM ai_index WHERE document_id=?', [$d['id']])) ai_index_doc((int)$d['id']);
+            $ix = one('SELECT version_id, summary, sens_info FROM ai_index WHERE document_id=?', [$d['id']]);
+            // key points come from the version readers see; never show a draft's text to someone who only sees the published one
+            if ($ix && (int)$ix['version_id'] === $vv) $toto['summary'] = json_decode((string)$ix['summary'], true) ?: [];
+            $rank = ['public' => 0, 'internal' => 1, 'confidential' => 2, 'restricted' => 3];
+            $sens = $ix && $ix['sens_info'] ? json_decode((string)$ix['sens_info'], true) : null;
+            $canClassify = (int)$d['owner_id'] === $u['id'] || $lv >= LVL_FULL || $canApprove;
+            if ($sens && $canClassify && ($rank[$sens['level']] ?? 0) > ($rank[$d['confidentiality']] ?? 1)) $toto['sensitive'] = $sens;
+            $seen = array_merge($relIds, array_column($similar, 'id'));
+            $byText = ai_related_for((int)$d['id'], $u, 5, $relIds);
+            $tagShared = array_column($similar, 'shared', 'id');
+            $merged = [];
+            foreach ($byText as $x) { $x['shared'] = $tagShared[$x['id']] ?? 0; $merged[$x['id']] = $x; }
+            foreach ($similar as $x) if (!isset($merged[$x['id']])) { $x['match'] = 0; $merged[$x['id']] = $x; }
+            $similar = array_slice(array_values($merged), 0, 6);
+        } catch (Throwable $e) { error_log('[KM] Toto: ' . $e->getMessage()); }
+    }
+
     // Auto-classification suggestions (only for people who can edit)
     $suggest = [];
     if ($lv >= LVL_CONTRIBUTE || (int)$d['owner_id'] === $u['id']) {
@@ -239,7 +261,7 @@ function api_docs_get() {
     return ['doc' => $doc, 'versions' => $versions, 'props' => $props, 'free_terms' => $freeTerms, 'approvals' => $approvals, 'comments' => $comments,
         'activity' => $activity, 'related' => $related, 'similar' => $similar, 'suggest' => $suggest, 'preview' => $preview, 'library' => $lib, 'path' => $path,
         'pending_approval_id' => $pendingApproval ? (int)$pendingApproval['id'] : null, 'level_name' => LEVEL_NAMES[$lv],
-        'ocr' => doc_ocr_info($d, $vv, $u)];
+        'ocr' => doc_ocr_info($d, $vv, $u), 'toto' => $toto, 'input' => doc_input_info($d, $u, $lv)];
 }
 
 /* ================= Upload & versioning ================= */
@@ -252,7 +274,9 @@ function save_props(int $docId, $meta): void {
         $fid = (int)$fid;
         if ($fid === 0) { // free-form enterprise terms
             q('DELETE FROM document_terms WHERE document_id=? AND field_id=0', [$docId]);
-            foreach ((array)$val as $tid) if ((int)$tid) q('INSERT IGNORE INTO document_terms (document_id, term_id, field_id) VALUES (?,?,0)', [$docId, (int)$tid]);
+            $ids = array_filter(array_map('intval', (array)$val));
+            $valid = $ids ? array_map('intval', array_column(all('SELECT id FROM terms WHERE id IN (' . in_list($ids) . ')'), 'id')) : [];
+            foreach ($valid as $tid) q('INSERT IGNORE INTO document_terms (document_id, term_id, field_id) VALUES (?,?,0)', [$docId, $tid]);
             continue;
         }
         if (!isset($fields[$fid])) continue;
@@ -304,12 +328,17 @@ function publish_version(array $d, int $verId, string $note = ''): string {
 function api_docs_upload() {
     must_post();
     $u = me();
-    if (empty($_FILES['file'])) fail('Choose a file to upload. If you did, it may exceed the server limit (' . ini_get('upload_max_filesize') . ').');
+    // a file Toto already analysed is referenced by its stage token instead of being sent twice
+    $stage = null;
+    if (($tok = sarg('stage_token', '', 64)) !== '') {
+        $stage = one('SELECT * FROM upload_stage WHERE token=? AND user_id=?', [$tok, $u['id']]);
+        if (!$stage) fail('This upload has expired. Choose the file again.', 410);
+    } elseif (empty($_FILES['file'])) fail('Choose a file to upload. If you did, it may exceed the server limit (' . ini_get('upload_max_filesize') . ').');
     $docId = iarg('document_id');
     $libId = iarg('library_id'); $folderId = iarg('folder_id') ?: null;
     $comment = sarg('comment', '', 500);
     $mode = sarg('submit', 'draft'); // draft | submit | publish
-    $origName = basename((string)$_FILES['file']['name']);
+    $origName = $stage ? (string)$stage['filename'] : basename((string)$_FILES['file']['name']);
 
     $d = null; $autoVersion = false;
     if ($docId) {
@@ -331,17 +360,32 @@ function api_docs_upload() {
         fail('"' . $d['title'] . '" is checked out by ' . val('SELECT name FROM users WHERE id=?', [$d['checked_out_by']]) . '. You can upload a new version once it is checked in.', 409);
     }
 
-    $file = store_upload($_FILES['file']);
+    // a hand-typed document number is reserved for Full control (as when editing) and must not repeat an existing one
+    $customNo = $d ? '' : sarg('doc_number', '', 64);
+    if ($customNo !== '') {
+        if ($lv < LVL_FULL) fail('Only someone with Full control can set the document number by hand. Leave it empty to number it automatically.', 403);
+        if (doc_number_taken($customNo)) fail("Document number $customNo is already used.");
+    }
+    if ($stage) {
+        $file = ['filename' => $stage['filename'], 'stored_name' => $stage['stored_name'], 'ext' => $stage['ext'], 'mime' => $stage['mime'], 'size' => (int)$stage['size'],
+            'sha256' => $stage['sha256'], 'path' => version_path($stage)];
+        if (!is_file($file['path'])) { q('DELETE FROM upload_stage WHERE token=?', [$stage['token']]); fail('This upload has expired. Choose the file again.', 410); }
+    } else $file = store_upload($_FILES['file']);
     if ($d) {
         $curHash = (string)val('SELECT sha256 FROM document_versions WHERE id=?', [$d['current_version_id']]);
-        if ($curHash === $file['sha256']) { @unlink($file['path']); fail('This file is identical to the current version of "' . $d['title'] . '". No new version was created.', 409); }
+        if ($curHash === $file['sha256']) { @unlink($file['path']); if ($stage) q('DELETE FROM upload_stage WHERE token=?', [$stage['token']]); fail('This file is identical to the current version of "' . $d['title'] . '". No new version was created.', 409); }
     }
     // Duplicate detection across the platform
     $dups = [];
     $dupRows = all('SELECT DISTINCT ' . DOC_COLS . ' FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE v.sha256=? AND d.deleted_at IS NULL' . ($d ? ' AND d.id<>' . (int)$d['id'] : '') . ' LIMIT 5', [$file['sha256']]);
     foreach (hydrate_docs($dupRows, $u) as $x) $dups[] = ['id' => $x['id'], 'title' => $x['title'], 'library' => $x['library'], 'doc_number' => $x['doc_number']];
 
-    $text = extract_text($file['path'], $file['ext']);
+    $text = $stage ? (string)$stage['extracted_text'] : extract_text($file['path'], $file['ext']);
+    $ocrCols = [];
+    if ($stage && (int)$stage['ocr_full'] && trim((string)$stage['ocr_text']) !== '') {   // read in the upload dialog: no need to read it again later
+        $text = (string)$stage['ocr_text'];
+        $ocrCols = ['text_source' => 'ocr', 'ocr_confidence' => $stage['ocr_confidence'], 'ocr_pages' => $stage['ocr_pages'], 'ocr_at' => now()];
+    }
     $lib = one('SELECT * FROM libraries WHERE id=?', [$libId]);
     db()->beginTransaction();
     if (!$d) {
@@ -351,12 +395,13 @@ function api_docs_upload() {
         $review = clean_review_date(sarg('review_date'));
         $docId = insert('documents', ['library_id' => $libId, 'folder_id' => $folderId, 'title' => $title, 'description' => sarg('description', '', 4000),
             'keywords' => sarg('keywords', '', 500), 'content_type_id' => $ctId, 'confidentiality' => $conf, 'owner_id' => $u['id'], 'review_date' => $review,
-            'doc_number' => sarg('doc_number', '', 64) ?: next_doc_number($libId, $ctId), 'inherit' => $conf === 'restricted' ? 0 : 1]);
+            'doc_number' => $customNo ?: next_doc_number($libId, $ctId), 'inherit' => $conf === 'restricted' ? 0 : 1]);
         $major = 0; $minor = 1;
         $meta = arg('meta');
         if (is_string($meta)) $meta = json_decode($meta, true);
         $d = load_doc($docId);
         save_props($docId, $meta);
+        add_terms_to_doc($docId, array_filter(array_map('intval', explode(',', sarg('tags', '', 2000)))));
         $action = 'upload';
     } else {
         $docId = (int)$d['id'];
@@ -365,7 +410,7 @@ function api_docs_upload() {
         $action = 'new_version';
     }
     $verId = insert('document_versions', ['document_id' => $docId, 'major' => $major, 'minor' => $minor, 'filename' => $file['filename'], 'stored_name' => $file['stored_name'],
-        'mime' => $file['mime'], 'ext' => $file['ext'], 'size' => $file['size'], 'sha256' => $file['sha256'], 'comment' => $comment, 'uploaded_by' => $u['id'], 'extracted_text' => $text]);
+        'mime' => $file['mime'], 'ext' => $file['ext'], 'size' => $file['size'], 'sha256' => $file['sha256'], 'comment' => $comment, 'uploaded_by' => $u['id'], 'extracted_text' => $text] + $ocrCols);
     $upd = ['current_version_id' => $verId, 'updated_at' => now(), 'status' => 'draft'];
     if ($d['checked_out_by'] && (int)$d['checked_out_by'] === $u['id']) { $upd['checked_out_by'] = null; $upd['checked_out_at'] = null; }
     update('documents', $upd, 'id=?', [$docId]);
@@ -389,12 +434,192 @@ function api_docs_upload() {
         request_approval($d, $verId, $comment);
         $status = 'pending';
     }
+    if ($stage) q('DELETE FROM upload_stage WHERE token=?', [$stage['token']]);
     db()->commit();
 
     $suggest = array_slice(suggest_terms($d['title'] . "\n" . mb_substr($text, 0, 60000), 6), 0, 6);
-    $needsOcr = ocr_needed($file['path'], $file['ext'], $text);
+    $needsOcr = !$ocrCols && ocr_needed($file['path'], $file['ext'], $text);
     return ['id' => $docId, 'version' => $label, 'version_id' => $verId, 'status' => $status, 'versioned' => $action === 'new_version', 'auto_versioned' => $autoVersion,
         'duplicates' => $dups, 'suggest' => $suggest, 'title' => $d['title'], 'indexed' => $text !== '' && !$needsOcr, 'needs_ocr' => $needsOcr, 'ext' => $file['ext']];
+}
+
+/* ---------------- Requests for input ---------------- */
+
+function doc_input_info(array $d, array $u, int $lv): array {
+    $cur = one('SELECT ext FROM document_versions WHERE id=?', [$d['current_version_id']]);
+    $office = isset(INPUT_EXT[strtolower((string)($cur['ext'] ?? ''))]);
+    $r = input_open((int)$d['id']);
+    $out = ['office' => $office, 'can_request' => $office && !$r && input_can_request($d, $u, $lv) && $d['deleted_at'] === null, 'open' => null];
+    if ($r) {
+        $mine = (int)$r['assignee_id'] === $u['id'];
+        $isReq = (int)$r['requested_by'] === $u['id'] || input_can_request($d, $u, $lv);
+        $v = one('SELECT filename, ext FROM document_versions WHERE id=?', [$r['version_id']]);
+        $out['open'] = ['id' => (int)$r['id'], 'assignee' => $r['assignee'], 'assignee_id' => (int)$r['assignee_id'], 'requester' => $r['requester'], 'message' => $r['message'],
+            'due_date' => $r['due_date'], 'created_at' => $r['created_at'], 'saved_at' => $r['work_saved_at'], 'saves' => (int)$r['work_saves'],
+            'mine' => $mine, 'can_cancel' => $isReq, 'app' => INPUT_APP[INPUT_EXT[strtolower((string)$v['ext'])] ?? ''] ?? 'Office',
+            // only the person asked ever receives the editing link
+            'link' => $mine ? input_office_link($r, $v) : null];
+    }
+    return $out;
+}
+
+/** Asks one named person for input on an Office document. Only that person can then edit it. */
+function api_docs_input_request() {
+    must_post();
+    $u = me();
+    $d = load_doc(iarg('id'));
+    $lv = doc_level($d, $u);
+    if (!input_can_request($d, $u, $lv)) fail('Only the document owner, someone with Full control or an administrator can request input.', 403);
+    $v = one('SELECT id, ext FROM document_versions WHERE id=?', [$d['current_version_id']]);
+    if (!isset(INPUT_EXT[strtolower((string)$v['ext'])])) fail('Input can be requested on Word, Excel and PowerPoint files.');
+    if (input_open((int)$d['id'])) fail('Someone has already been asked for input on this document. Close that request first.', 409);
+    if ($d['checked_out_by'] && (int)$d['checked_out_by'] !== $u['id']) fail('This document is checked out by ' . val('SELECT name FROM users WHERE id=?', [$d['checked_out_by']]) . '. It must be checked in first.', 409);
+    $who = one('SELECT * FROM users WHERE id=? AND active=1', [iarg('assignee_id')]);
+    if (!$who) fail('Choose the person you want input from.');
+    if (doc_level($d, $who) < LVL_READ) fail($who['name'] . ' can’t open this document. Give them access first (Manage permissions), then ask again.');
+    $due = sarg('due_date', '', 10);
+    if ($due !== '' && (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $due) || $due < date('Y-m-d'))) fail('The due date must be today or later.');
+    $msg = trim(mb_substr(sarg('message', '', 1000), 0, 1000));
+    db()->beginTransaction();
+    $rid = insert('input_requests', ['document_id' => $d['id'], 'version_id' => (int)$v['id'], 'requested_by' => $u['id'], 'assignee_id' => (int)$who['id'],
+        'message' => $msg, 'due_date' => $due ?: null, 'dav_token' => bin2hex(random_bytes(20))]);
+    // locked for them while the request is open: nobody else can change the file
+    update('documents', ['checked_out_by' => (int)$who['id'], 'checked_out_at' => now()], 'id=?', [$d['id']]);
+    audit('input_request', 'document', (int)$d['id'], 'Asked ' . $who['name'] . ($due ? " · due $due" : ''));
+    db()->commit();
+    notify([(int)$who['id']], 'input_request', "{$u['name']} asked for your input on {$d['title']}", $msg . ($due ? "\nDue " . date('j M Y', strtotime($due)) : ''), '#/doc/' . $d['id']);
+    return ['id' => $rid, 'message' => $who['name'] . ' has been asked for input. Only they can edit the document until the request is closed.'];
+}
+
+function input_load_for(array $u, int $docId): array {
+    $r = input_open($docId);
+    if (!$r) fail('There is no open request for input on this document.', 404);
+    return $r;
+}
+
+/** The person asked has finished: their last save becomes the next version. */
+function api_docs_input_done() {
+    must_post();
+    $u = me();
+    $d = load_doc(iarg('id'));
+    $r = input_load_for($u, (int)$d['id']);
+    if ((int)$r['assignee_id'] !== $u['id']) fail('Only ' . $r['assignee'] . ' can finish this request.', 403);
+    $comment = trim(mb_substr(sarg('comment', '', 1000), 0, 1000));
+    $label = input_close($r, $u, 'done', $comment);
+    audit('input_done', 'document', (int)$d['id'], $label ? "Version $label" : 'No changes');
+    notify([(int)$r['requested_by']], 'input_done', "{$u['name']} finished their input on {$d['title']}", ($label ? "New version $label." : 'No changes were made.') . ($comment !== '' ? "\n“{$comment}”" : ''), '#/doc/' . $d['id']);
+    return ['version' => $label, 'message' => $label ? "Thank you! Your changes are saved as version $label." : 'Done — no changes were saved, so the document stays as it was.'];
+}
+
+/** The requester (or an owner / Full control / admin) withdraws the request; unsaved edits are discarded. */
+function api_docs_input_cancel() {
+    must_post();
+    $u = me();
+    $d = load_doc(iarg('id'));
+    $r = input_load_for($u, (int)$d['id']);
+    if ((int)$r['requested_by'] !== $u['id'] && !input_can_request($d, $u, doc_level($d, $u))) fail('Only the person who asked can withdraw this request.', 403);
+    input_close($r, $u, 'cancelled');
+    audit('input_cancel', 'document', (int)$d['id'], 'Request to ' . $r['assignee'] . ' withdrawn');
+    notify([(int)$r['assignee_id']], 'input_cancelled', "{$u['name']} withdrew the request for input on {$d['title']}", '', '#/doc/' . $d['id']);
+    return ['message' => 'Request withdrawn. The document is unlocked.'];
+}
+
+/** No desktop Office (e.g. on a phone or Mac without it)? The person asked can download, edit and upload their copy here. */
+function api_docs_input_upload() {
+    must_post();
+    $u = me();
+    $d = load_doc(iarg('id'));
+    $r = input_load_for($u, (int)$d['id']);
+    if ((int)$r['assignee_id'] !== $u['id']) fail('Only ' . $r['assignee'] . ' can add input to this document.', 403);
+    if (empty($_FILES['file'])) fail('Choose your edited file.');
+    $v = one('SELECT ext FROM document_versions WHERE id=?', [$r['version_id']]);
+    $ext = strtolower(pathinfo((string)$_FILES['file']['name'], PATHINFO_EXTENSION));
+    if ($ext !== strtolower((string)$v['ext'])) fail('Please upload the same kind of file (.' . $v['ext'] . ').');
+    $f = store_upload($_FILES['file']);
+    if ($r['work_stored_name']) @unlink(version_path(['stored_name' => $r['work_stored_name']]));
+    update('input_requests', ['work_stored_name' => $f['stored_name'], 'work_size' => $f['size'], 'work_sha256' => $f['sha256'], 'work_saved_at' => now(), 'work_saves' => (int)$r['work_saves'] + 1], 'id=?', [$r['id']]);
+    audit('input_save', 'document', (int)$d['id'], 'Uploaded an edited copy');
+    return ['message' => 'Your edited copy is saved. Press “I’m done” when you have finished.'];
+}
+
+/** Tags a document with terms, each in the first property that uses its term set (or as a general tag). */
+function add_terms_to_doc(int $docId, array $termIds): void {
+    $termIds = array_slice(array_unique(array_map('intval', $termIds)), 0, 30);
+    if (!$termIds) return;
+    foreach (all('SELECT id FROM terms WHERE deprecated=0 AND id IN (' . in_list($termIds) . ')') as $t) {
+        $tid = (int)$t['id'];
+        if (val('SELECT 1 FROM document_terms WHERE document_id=? AND term_id=?', [$docId, $tid])) continue;
+        $fid = (int)val('SELECT f.id FROM fields f JOIN terms t ON t.termset_id=f.termset_id WHERE t.id=? ORDER BY f.sort LIMIT 1', [$tid]);
+        q('INSERT IGNORE INTO document_terms (document_id, term_id, field_id) VALUES (?,?,?)', [$docId, $tid, $fid]);
+    }
+}
+
+/**
+ * Toto: reads a file before it is published and suggests its properties. The file is kept for a day under a token,
+ * so the upload itself does not send it again.
+ */
+function api_docs_analyze() {
+    must_post();
+    $u = me();
+    if (empty($_FILES['file'])) fail('Choose a file to upload. If you did, it may exceed the server limit (' . ini_get('upload_max_filesize') . ').');
+    $libId = iarg('library_id'); $folderId = iarg('folder_id') ?: null;
+    if (!val('SELECT id FROM libraries WHERE id=? AND deleted_at IS NULL', [$libId])) fail('Choose a library to upload into.');
+    if ($folderId && (int)val('SELECT library_id FROM folders WHERE id=?', [$folderId]) !== $libId) fail('That folder is not in this library.');
+    if (container_level($libId, $folderId, $u) < LVL_CONTRIBUTE) fail("You don't have permission to upload here. Ask an administrator for Contribute access.", 403);
+    ai_stage_cleanup();
+    // a person can't fill the server's disk with files that are never published
+    $mine = one('SELECT COUNT(*) n, COALESCE(SUM(size),0) b FROM upload_stage WHERE user_id=?', [$u['id']]);
+    if ((int)$mine['n'] >= 50 || (int)$mine['b'] + (int)($_FILES['file']['size'] ?? 0) > 2147483648) fail('Too many files are waiting to be uploaded. Finish or cancel those uploads first (they are cleared after a day).', 429);
+    $file = store_upload($_FILES['file']);
+    $text = extract_text($file['path'], $file['ext']);
+    $token = bin2hex(random_bytes(16));
+    insert('upload_stage', ['token' => $token, 'user_id' => $u['id'], 'filename' => $file['filename'], 'stored_name' => $file['stored_name'], 'ext' => $file['ext'],
+        'mime' => $file['mime'], 'size' => $file['size'], 'sha256' => $file['sha256'], 'extracted_text' => $text]);
+    $res = ['token' => $token, 'toto' => null];
+    if (ai_on()) {
+        try { $res['toto'] = ai_analyze($text, $file['filename'], $u); } catch (Throwable $e) { error_log('[KM] Toto analyse: ' . $e->getMessage()); }
+    }
+    // exact copies are always reported (also when Toto is switched off)
+    $dupRows = all('SELECT DISTINCT ' . DOC_COLS . ' FROM documents d JOIN document_versions v ON v.document_id=d.id WHERE v.sha256=? AND d.deleted_at IS NULL LIMIT 5', [$file['sha256']]);
+    $res['exact_duplicates'] = array_map(fn($x) => ['id' => $x['id'], 'title' => $x['title'], 'library' => $x['library'], 'doc_number' => $x['doc_number']], hydrate_docs($dupRows, $u));
+    $res['needs_ocr'] = ocr_needed($file['path'], $file['ext'], $text);
+    return $res;
+}
+
+/**
+ * The upload dialog read a scanned file with text recognition (in the browser, as everywhere else in the platform):
+ * keep the text with the staged file and let Toto analyse it again.
+ */
+function api_docs_stage_text() {
+    must_post();
+    $u = me();
+    $st = one('SELECT * FROM upload_stage WHERE token=? AND user_id=?', [sarg('token', '', 64), $u['id']]);
+    if (!$st) fail('This upload has expired. Choose the file again.', 410);
+    $text = clean_text(mb_substr((string)arg('text', ''), 0, EXTRACT_LIMIT * 2));
+    $pages = max(1, min(5000, iarg('pages', 1)));
+    $ran = max(0, min($pages, iarg('ocr_pages_run', $pages)));
+    // the text replaces the file's own only when the file really is a scan; otherwise it is used for suggestions alone
+    $isScan = ocr_needed(version_path($st), (string)$st['ext'], (string)$st['extracted_text']);
+    $full = $isScan && sarg('partial') !== '1' && $ran > 0;
+    update('upload_stage', ['ocr_text' => $text, 'ocr_full' => $full ? 1 : 0, 'ocr_confidence' => max(0, min(100, iarg('confidence', 0))), 'ocr_pages' => $pages], 'token=?', [$st['token']]);
+    $res = ['toto' => null, 'words' => str_word_count($text), 'full' => $full];
+    if (ai_on()) {
+        try { $res['toto'] = ai_analyze($text, (string)$st['filename'], $u); } catch (Throwable $e) { error_log('[KM] Toto analyse (OCR): ' . $e->getMessage()); }
+    }
+    return $res;
+}
+
+/** Cancels a staged upload (the person removed the file or closed the dialog). */
+function api_docs_unstage() {
+    must_post();
+    $u = me();
+    foreach (array_slice((array)arg('tokens', []), 0, 100) as $tok) {
+        $st = one('SELECT token, stored_name FROM upload_stage WHERE token=? AND user_id=?', [(string)$tok, $u['id']]);
+        if (!$st) continue;
+        @unlink(version_path($st));
+        q('DELETE FROM upload_stage WHERE token=?', [$st['token']]);
+    }
+    return [];
 }
 
 function notify_followers(array $d, string $title, string $body): void {
@@ -439,7 +664,11 @@ function api_docs_update() {
         // an unchanged existing date is kept as it is (even if it has passed); a new date must be in the future
         $data['review_date'] = sarg('review_date') === (string)$d['review_date'] ? $d['review_date'] : $newReview;
     }
-    if (array_key_exists('doc_number', $in) && $lv >= LVL_FULL) $data['doc_number'] = sarg('doc_number', '', 64) ?: null;
+    if (array_key_exists('doc_number', $in) && $lv >= LVL_FULL) {
+        $no = sarg('doc_number', '', 64);
+        if ($no !== '' && doc_number_taken($no, (int)$d['id'])) fail("Document number $no is already used.");
+        $data['doc_number'] = $no ?: null;
+    }
     $data['updated_at'] = now();
     update('documents', $data, 'id=?', [$d['id']]);
     if (isset($in['meta'])) save_props((int)$d['id'], is_string($in['meta']) ? json_decode($in['meta'], true) : $in['meta']);
@@ -549,9 +778,12 @@ function api_docs_restore_version() {
     must_post();
     $u = me();
     $d = load_doc(iarg('id'));
-    if (doc_level($d, $u) < LVL_CONTRIBUTE) fail("You can't restore versions of this document.", 403);
+    $lv = doc_level($d, $u);
+    if ($lv < LVL_CONTRIBUTE) fail("You can't restore versions of this document.", 403);
+    assert_not_checked_out($d, $u, $lv);
     $v = one('SELECT * FROM document_versions WHERE id=? AND document_id=?', [iarg('version_id'), $d['id']]);
     if (!$v) fail('Version not found.');
+    db()->beginTransaction();
     $cur = one('SELECT major, minor FROM document_versions WHERE id=?', [$d['current_version_id']]);
     $new = insert('document_versions', ['document_id' => $d['id'], 'major' => (int)$cur['major'], 'minor' => (int)$cur['minor'] + 1, 'filename' => $v['filename'],
         'stored_name' => $v['stored_name'], 'mime' => $v['mime'], 'ext' => $v['ext'], 'size' => $v['size'], 'sha256' => $v['sha256'],
@@ -562,8 +794,10 @@ function api_docs_restore_version() {
     if (!approvals_on()) {
         $label = publish_version(load_doc((int)$d['id']), $new);
         audit('publish', 'document', (int)$d['id'], "Version $label");
+        db()->commit();
         return ['message' => "Restored and published as version $label."];
     }
+    db()->commit();
     return ['message' => 'Restored as a new draft version. Submit it for approval to publish.'];
 }
 
@@ -585,6 +819,7 @@ function api_docs_delete() {
     $u = me();
     $ids = array_filter(array_map('intval', (array)arg('ids', [iarg('id')])));
     $done = 0; $locked = 0;
+    db()->beginTransaction();
     foreach ($ids as $id) {
         $d = one('SELECT ' . DOC_COLS . ' FROM documents d WHERE d.id=? AND d.deleted_at IS NULL', [$id]);
         if (!$d) continue;
@@ -595,6 +830,7 @@ function api_docs_delete() {
         audit('delete', 'document', $id, $d['title']);
         $done++;
     }
+    db()->commit();
     if (!$done) fail($locked ? 'Published documents can’t be deleted — they stay as a permanent record. Upload a new version instead, or ask an administrator.'
         : "You can't delete the selected document(s). Only the author of an unpublished draft can.", 403);
     return ['deleted' => $done, 'message' => ($done === 1 ? 'Moved to the recycle bin.' : "$done documents moved to the recycle bin.")
@@ -625,14 +861,18 @@ function api_docs_restore() {
 
 function purge_document(int $id): void {
     $vers = all('SELECT stored_name FROM document_versions WHERE document_id=?', [$id]);
+    $unlink = [];
     foreach ($vers as $v) {
         $others = (int)val('SELECT COUNT(*) FROM document_versions WHERE stored_name=? AND document_id<>?', [$v['stored_name'], $id]);
-        if (!$others) @unlink(version_path($v));
+        if (!$others) $unlink[] = version_path($v);
     }
+    db()->beginTransaction();
     foreach (['document_versions', 'document_meta', 'document_terms', 'approvals', 'comments', 'favorites'] as $t) q("DELETE FROM $t WHERE document_id=?", [$id]);
     q('DELETE FROM document_links WHERE document_id=? OR related_id=?', [$id, $id]);
     q("DELETE FROM permissions WHERE scope_type='document' AND scope_id=?", [$id]);
     q('DELETE FROM documents WHERE id=?', [$id]);
+    db()->commit();
+    foreach ($unlink as $p) @unlink($p);
 }
 
 function api_docs_purge() {
@@ -658,15 +898,18 @@ function api_docs_move() {
     if ($folder && (int)val('SELECT library_id FROM folders WHERE id=?', [$folder]) !== $lib) fail('That folder is not in the chosen library.');
     if (container_level($lib, $folder, $u) < LVL_CONTRIBUTE) fail("You don't have Contribute access to the destination.", 403);
     $n = 0;
+    db()->beginTransaction();
     foreach (array_filter(array_map('intval', (array)arg('ids', []))) as $id) {
         $d = one('SELECT ' . DOC_COLS . ' FROM documents d WHERE d.id=? AND d.deleted_at IS NULL', [$id]);
         if (!$d) continue;
         $lv = doc_level($d, $u);
         if (!(((int)$d['owner_id'] === $u['id'] && $lv >= LVL_CONTRIBUTE) || $lv >= LVL_FULL)) continue;
+        if ($d['checked_out_by'] && (int)$d['checked_out_by'] !== $u['id'] && $lv < LVL_FULL) continue;
         update('documents', ['library_id' => $lib, 'folder_id' => $folder, 'updated_at' => now()], 'id=?', [$id]);
         audit('move', 'document', $id, 'To ' . val('SELECT name FROM libraries WHERE id=?', [$lib]) . ($folder ? ' / ' . val('SELECT name FROM folders WHERE id=?', [$folder]) : ''));
         $n++;
     }
+    db()->commit();
     if (!$n) fail("You can't move the selected document(s).", 403);
     return ['moved' => $n, 'message' => $n === 1 ? 'Moved.' : "$n documents moved."];
 }

@@ -5,8 +5,8 @@
  */
 declare(strict_types=1);
 
-define('KM_VERSION', '1.4.0');
-define('KM_DB_VERSION', 4);
+define('KM_VERSION', '1.7.0');
+define('KM_DB_VERSION', 9);
 define('KM_ROOT', dirname(__DIR__));
 define('KM_APP', __DIR__);
 
@@ -112,12 +112,101 @@ function km_migrate(): void {
     foreach ($vadd as $c => $def) if (!in_array($c, $vcols, true)) db()->exec("ALTER TABLE document_versions ADD COLUMN `$c` $def");
     if (setting('mfa_policy') === null) set_setting('mfa_policy', 'optional');
     if (setting('mfa_remember_days') === null) set_setting('mfa_remember_days', '30');
+    // v5: sign-in throttling per device (IP) instead of locking whole accounts
+    db()->exec("CREATE TABLE IF NOT EXISTS auth_failures (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  ip VARCHAR(64) NOT NULL DEFAULT '',
+  user_id INT NULL,
+  email VARCHAR(190) NOT NULL DEFAULT '',
+  kind VARCHAR(16) NOT NULL DEFAULT 'password',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_af_ip (ip, created_at),
+  KEY idx_af_user (user_id, ip, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    q('UPDATE users SET locked_until=NULL, failed_logins=0');
     // v4: approval workflow switched off — uploads publish straight away; anything still waiting is published now
     $fromV = (int)setting('db_version', 1);
     if (setting('approval_workflow') === null) set_setting('approval_workflow', '0');
     if ($fromV < 4 && setting('approval_workflow') === '0') km_publish_pending();
+    // v6: Toto, the built-in document assistant (index, word statistics, staged uploads)
+    db()->exec("CREATE TABLE IF NOT EXISTS ai_index (
+  document_id INT PRIMARY KEY,
+  version_id INT NOT NULL,
+  text_hash CHAR(40) NOT NULL,
+  tf MEDIUMTEXT NULL,
+  vec MEDIUMTEXT NULL,
+  minhash TEXT NULL,
+  summary TEXT NULL,
+  sens_info TEXT NULL,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_ai_upd (updated_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    db()->exec("CREATE TABLE IF NOT EXISTS ai_df (
+  token VARCHAR(64) NOT NULL PRIMARY KEY,
+  df INT NOT NULL DEFAULT 0
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin");
+    db()->exec("CREATE TABLE IF NOT EXISTS upload_stage (
+  token CHAR(32) NOT NULL PRIMARY KEY,
+  user_id INT NOT NULL,
+  filename VARCHAR(255) NOT NULL,
+  stored_name VARCHAR(64) NOT NULL,
+  ext VARCHAR(16) NOT NULL DEFAULT '',
+  mime VARCHAR(128) NOT NULL DEFAULT '',
+  size BIGINT NOT NULL DEFAULT 0,
+  sha256 CHAR(64) NOT NULL,
+  extracted_text MEDIUMTEXT NULL,
+  ocr_text MEDIUMTEXT NULL,
+  ocr_full TINYINT(1) NOT NULL DEFAULT 0,
+  ocr_confidence TINYINT NULL,
+  ocr_pages SMALLINT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_stage_user (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // v7: text read from scans in the upload dialog is kept with the staged file
+    $scols = array_column(all("SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'upload_stage'"), 'COLUMN_NAME');
+    foreach (['ocr_text' => 'MEDIUMTEXT NULL', 'ocr_full' => 'TINYINT(1) NOT NULL DEFAULT 0', 'ocr_confidence' => 'TINYINT NULL', 'ocr_pages' => 'SMALLINT NULL'] as $c => $def)
+        if (!in_array($c, $scols, true)) db()->exec("ALTER TABLE upload_stage ADD COLUMN `$c` $def");
+    // v8: Toto learns facts from administrators, and always knows who built the platform
+    db()->exec("CREATE TABLE IF NOT EXISTS toto_facts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  subject VARCHAR(190) NOT NULL,
+  fact VARCHAR(600) NOT NULL,
+  created_by INT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_tf_subject (subject)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    // v9: requests for input (one named person edits in Word, Excel or PowerPoint)
+    db()->exec("CREATE TABLE IF NOT EXISTS input_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  document_id INT NOT NULL,
+  version_id INT NOT NULL,
+  requested_by INT NOT NULL,
+  assignee_id INT NOT NULL,
+  message VARCHAR(1000) NOT NULL DEFAULT '',
+  due_date DATE NULL,
+  status ENUM('open','done','cancelled','expired') NOT NULL DEFAULT 'open',
+  dav_token CHAR(40) NOT NULL,
+  work_stored_name VARCHAR(64) NULL,
+  work_size BIGINT NULL,
+  work_sha256 CHAR(64) NULL,
+  work_saved_at DATETIME NULL,
+  work_saves INT NOT NULL DEFAULT 0,
+  lock_token VARCHAR(80) NULL,
+  lock_expires DATETIME NULL,
+  result_version_id INT NULL,
+  done_comment VARCHAR(1000) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  closed_at DATETIME NULL,
+  closed_by INT NULL,
+  UNIQUE KEY uq_ir_token (dav_token),
+  KEY idx_ir_doc (document_id, status),
+  KEY idx_ir_assignee (assignee_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+    if (setting('ai_creator') === null) set_setting('ai_creator', 'Om Khadka');
+    if (setting('ai_enabled') === null) set_setting('ai_enabled', '1');
+    if ($fromV < 6) set_setting('ai_needs_rebuild', '1');
     set_setting('db_version', (string)KM_DB_VERSION);
-    try { insert('audit_log', ['action' => 'upgrade', 'object_type' => 'system', 'details' => 'Database upgraded to v' . KM_DB_VERSION . ' (direct publishing without approval)']); } catch (Throwable $e) {}
+    try { insert('audit_log', ['action' => 'upgrade', 'object_type' => 'system', 'details' => 'Database upgraded to v' . KM_DB_VERSION . ' (Toto document assistant, Ask Toto, scans read before upload)']); } catch (Throwable $e) {}
 }
 
 /** Is the approval workflow on? Off (the default from v1.4) means uploads publish immediately. */
@@ -131,6 +220,7 @@ function km_publish_pending(?int $byUser = null): int {
         $verId = (int)($a['version_id'] ?? $d['current_version_id']);
         $v = one('SELECT major, minor FROM document_versions WHERE id=?', [$verId]);
         if (!$v) continue;
+        db()->beginTransaction();
         $major = (int)$v['major'];
         if ((int)$v['minor'] !== 0) {
             $major = (int)val('SELECT COALESCE(MAX(major),0) FROM document_versions WHERE document_id=? AND minor=0', [$d['id']]) + 1;
@@ -144,6 +234,7 @@ function km_publish_pending(?int $byUser = null): int {
         update('documents', $upd, 'id=?', [$d['id']]);
         q("UPDATE approvals SET decision='approved', decided_by=?, decided_at=?, note='Published automatically: approval workflow switched off' WHERE document_id=? AND decision='pending'",
             [$byUser, date('Y-m-d H:i:s'), $d['id']]);
+        db()->commit();
         if (function_exists('reindex_doc')) reindex_doc((int)$d['id']);
         try { insert('audit_log', ['user_id' => $byUser, 'action' => 'publish', 'object_type' => 'document', 'object_id' => (int)$d['id'],
             'details' => "Version $major.0 · approval workflow switched off"]); } catch (Throwable $e) {}
@@ -153,10 +244,16 @@ function km_publish_pending(?int $byUser = null): int {
 }
 
 /* ---------------- Session & auth ---------------- */
+/** HTTPS? A proxy's X-Forwarded-Proto header is believed only from addresses listed in config 'trusted_proxies'. */
+function is_https(): bool {
+    if (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') return true;
+    $proxies = (array)cfg('trusted_proxies', []);
+    return $proxies && in_array($_SERVER['REMOTE_ADDR'] ?? '', $proxies, true) && strtolower($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https';
+}
 function start_session(): void {
     if (session_status() === PHP_SESSION_ACTIVE) return;
     km_migrate();
-    $secure = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
+    $secure = is_https();
     session_name('TGISLKM');
     session_set_cookie_params(['lifetime' => 0, 'path' => '/', 'secure' => $secure, 'httponly' => true, 'samesite' => 'Lax']);
     $dir = storage_path('sessions');
@@ -202,7 +299,9 @@ function bind_session_password(int $uid): void {
 /** Check-outs lapse after the configured number of hours, so a forgotten lock can't block a document for ever. */
 function expire_checkouts(): void {
     $h = max(1, (int)setting('checkout_hours', 72));
-    q('UPDATE documents SET checked_out_by=NULL, checked_out_at=NULL WHERE checked_out_by IS NOT NULL AND checked_out_at < DATE_SUB(NOW(), INTERVAL ' . $h . ' HOUR)');
+    // a document waiting for someone's input stays locked for them until the request is closed
+    q("UPDATE documents SET checked_out_by=NULL, checked_out_at=NULL WHERE checked_out_by IS NOT NULL AND checked_out_at < DATE_SUB(NOW(), INTERVAL $h HOUR)
+        AND id NOT IN (SELECT document_id FROM input_requests WHERE status='open')");
 }
 function me(): array {
     $u = current_user();

@@ -46,6 +46,7 @@ function totp_code(string $secretB32, int $step): string {
 function totp_verify(string $secretB32, string $code, int $lastStep = 0): int {
     $code = preg_replace('/\D/', '', $code);
     if (strlen($code) !== MFA_DIGITS) return 0;
+    if (strlen(b32_decode($secretB32)) < 16) return 0;   // empty, corrupted or too-short secret: nothing can match
     $now = intdiv(time(), MFA_PERIOD);
     for ($i = -MFA_WINDOW; $i <= MFA_WINDOW; $i++) {
         $step = $now + $i;
@@ -68,14 +69,13 @@ function mfa_key(): string {
     return hash('sha256', 'mfa|' . $k, true);
 }
 function mfa_encrypt(string $plain): string {
-    if (!function_exists('openssl_encrypt')) return 'p1:' . base64_encode($plain);
+    if (!function_exists('openssl_encrypt')) fail('Two-step verification needs the PHP OpenSSL extension. Ask the host to enable it.', 500);
     $iv = random_bytes(12); $tag = '';
     $ct = openssl_encrypt($plain, 'aes-256-gcm', mfa_key(), OPENSSL_RAW_DATA, $iv, $tag);
     return 'v1:' . base64_encode($iv . $tag . $ct);
 }
 function mfa_decrypt(?string $stored): string {
     if (!$stored) return '';
-    if (strncmp($stored, 'p1:', 3) === 0) return (string)base64_decode(substr($stored, 3));
     if (strncmp($stored, 'v1:', 3) !== 0) return '';
     $raw = (string)base64_decode(substr($stored, 3));
     $pt = openssl_decrypt(substr($raw, 28), 'aes-256-gcm', mfa_key(), OPENSSL_RAW_DATA, substr($raw, 0, 12), substr($raw, 12, 16));
@@ -123,7 +123,7 @@ function mfa_required_for_role(string $role): bool {
 function mfa_must_enroll(?array $u): bool { return $u && !(int)($u['mfa_enabled'] ?? 0) && mfa_required_for_role($u['role']); }
 
 /* ---------------- Trusted devices ---------------- */
-function mfa_cookie_secure(): bool { return (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'); }
+function mfa_cookie_secure(): bool { return is_https(); }
 
 function mfa_trust_device(int $uid): void {
     $days = (int)setting('mfa_remember_days', 30);
@@ -143,6 +143,8 @@ function mfa_device_trusted(int $uid): bool {
     update('mfa_devices', ['last_used' => now()], 'id=?', [$row['id']]);
     return true;
 }
+/** Removes a person's remembered browsers without touching the cookie of whoever is making the request (admin actions). */
+function mfa_drop_devices(int $uid): void { q('DELETE FROM mfa_devices WHERE user_id=?', [$uid]); }
 function mfa_forget_devices(int $uid): void {
     q('DELETE FROM mfa_devices WHERE user_id=?', [$uid]);
     if (isset($_COOKIE[MFA_DEVICE_COOKIE])) setcookie(MFA_DEVICE_COOKIE, '', ['expires' => time() - 3600, 'path' => '/', 'secure' => mfa_cookie_secure(), 'httponly' => true, 'samesite' => 'Lax']);

@@ -13,7 +13,7 @@ function seed_defaults(int $adminId): void {
         'session_minutes' => '240',
         'email_notifications' => '0',
         'checkout_hours' => '72',
-        'db_version' => '4', 'approval_workflow' => '0',
+        'db_version' => '9', 'approval_workflow' => '0', 'ai_enabled' => '1', 'ai_creator' => 'Om Khadka',
         'mfa_policy' => 'optional',
         'mfa_remember_days' => '30',
         'welcome_text' => 'One place for every controlled document, drawing, procedure and lesson learned across the Mombasa LPG terminal.',
@@ -234,4 +234,5 @@ function seed_demo(int $adminId, string $password): void {
         'body' => 'Please align the LEL set points with the HSE philosophy before approval.']);
     insert('announcements', ['title' => 'HAZOP close-out workshop on Thursday', 'pinned' => 0, 'created_by' => $U['grace.wanjiku'],
         'body' => 'All open HAZOP actions must have evidence uploaded to Engineering Documents before the workshop.']);
+    if (function_exists('ai_index_doc')) foreach (array_column(all('SELECT id FROM documents'), 'id') as $did) { try { ai_index_doc((int)$did, true); } catch (Throwable $e) {} }
 }

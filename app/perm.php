@@ -74,12 +74,22 @@ function container_level(int $libId, ?int $folderId, ?array $u = null): int {
 /** Effective level on a document row (needs id, library_id, folder_id, inherit). */
 /** Highest level granted to this user by permission entries placed directly on the document ("named people"). */
 function doc_named_level(array $d, array $u): int {
-    static $rows = [];
     $id = (int)$d['id'];
-    if (!isset($rows[$id])) $rows[$id] = all("SELECT principal_type, principal_id, level FROM permissions WHERE scope_type='document' AND scope_id=?", [$id]);
+    if (!isset($GLOBALS['KM_DOC_PERMS'][$id])) preload_doc_perms([$id]);
     $lv = 0;
-    foreach ($rows[$id] as $r) if (principal_matches($r, $u)) $lv = max($lv, (int)$r['level']);
+    foreach ($GLOBALS['KM_DOC_PERMS'][$id] as $r) if (principal_matches($r, $u)) $lv = max($lv, (int)$r['level']);
     return $lv;
+}
+
+/** Loads the document-level permission entries of many documents in ONE query (avoids a query per document in lists). */
+function preload_doc_perms(array $ids): void {
+    $ids = array_values(array_diff(array_unique(array_map('intval', $ids)), array_keys($GLOBALS['KM_DOC_PERMS'] ?? [])));
+    if (!$ids) return;
+    foreach (array_chunk($ids, 1000) as $chunk) {
+        foreach ($chunk as $id) $GLOBALS['KM_DOC_PERMS'][$id] = [];
+        foreach (all("SELECT scope_id, principal_type, principal_id, level FROM permissions WHERE scope_type='document' AND scope_id IN (" . in_list($chunk) . ')') as $r)
+            $GLOBALS['KM_DOC_PERMS'][(int)$r['scope_id']][] = $r;
+    }
 }
 
 /** Level from library / folder / document permissions only, before the classification rule. */
@@ -119,12 +129,13 @@ function doc_level(array $d, ?array $u = null): int {
 /** Who among these user ids may see the document (used to avoid leaking titles in notifications). */
 function users_who_can_see(array $ids, array $d): array {
     $out = [];
-    foreach (array_unique(array_map('intval', $ids)) as $id) {
-        $c = one('SELECT id, role, department_id, active FROM users WHERE id=?', [$id]);
-        if (!$c || !(int)$c['active']) continue;
-        $u = ['id' => (int)$c['id'], 'role' => $c['role'], 'department_id' => $c['department_id'] !== null ? (int)$c['department_id'] : null,
-              'groups' => array_map('intval', array_column(all('SELECT group_id FROM group_members WHERE user_id = ?', [$id]), 'group_id'))];
-        if (visible_version($d, $u)) $out[] = $id;
+    $ids = array_unique(array_map('intval', $ids));
+    if (!$ids) return [];
+    $groups = [];
+    foreach (all('SELECT user_id, group_id FROM group_members WHERE user_id IN (' . in_list($ids) . ')') as $g) $groups[(int)$g['user_id']][] = (int)$g['group_id'];
+    foreach (all('SELECT id, role, department_id FROM users WHERE active=1 AND id IN (' . in_list($ids) . ')') as $c) {
+        $u = ['id' => (int)$c['id'], 'role' => $c['role'], 'department_id' => $c['department_id'] !== null ? (int)$c['department_id'] : null, 'groups' => $groups[(int)$c['id']] ?? []];
+        if (visible_version($d, $u)) $out[] = (int)$c['id'];
     }
     return $out;
 }

@@ -363,7 +363,7 @@ route('/admin/settings', async (page) => {
         <div class="field"><label>Platform name</label><input class="input" data-k="site_name" value="${esc(s.site_name)}"></div>
         <div class="field"><label>Organisation</label><input class="input" data-k="org_name" value="${esc(s.org_name)}"></div>
         <div class="field"><label>Welcome text</label><textarea class="input" data-k="welcome_text">${esc(s.welcome_text)}</textarea></div>
-        <div class="field"><label>Site address</label><input class="input" data-k="base_url" value="${esc(s.base_url)}" placeholder="https://km.arginternational.ae/"><span class="hint">Used for links in notification emails.</span></div></div></div>
+        <div class="field"><label>Site address</label><input class="input" data-k="base_url" value="${esc(s.base_url)}" placeholder="https://km.taifagaskenya.co.ke"><span class="hint">Used for links in notification emails and for opening documents in Word, Excel and PowerPoint.</span></div></div></div>
       <div class="panel"><div class="panel-h"><h3>Documents</h3></div><div class="panel-b" style="display:grid;gap:14px">
         <div class="field"><label>Document number pattern</label><input class="input mono" data-k="number_pattern" value="${esc(s.number_pattern)}"><span class="hint">Tokens: {LIB} library code, {TYPE} content-type code, {SEQ} running number, {YYYY} / {YY} year.</span></div>
         <div class="grid2"><div class="field"><label>Max upload (MB)</label><input class="input" type="number" data-k="max_upload_mb" value="${esc(s.max_upload_mb)}"><span class="hint">Server allows ${esc(sv.upload_max_filesize)} per file / ${esc(sv.post_max_size)} per request.</span></div>
@@ -383,11 +383,64 @@ route('/admin/settings', async (page) => {
         <div class="field"><label>Sign out after inactivity (minutes)</label><input class="input" type="number" data-k="session_minutes" value="${esc(s.session_minutes)}"></div>
         <label class="check"><input type="checkbox" data-k="email_notifications" ${s.email_notifications === '1' ? 'checked' : ''}><span><b>Also send notifications by email</b><br><span class="small muted">Uses the server’s mail function. Create the sender mailbox in cPanel → Email Accounts first.</span></span></label>
         <div class="field"><label>Sender address</label><input class="input" data-k="mail_from" value="${esc(s.mail_from)}" placeholder="no-reply@arginternational.ae"></div></div></div>
+      <div class="panel toto-panel"><div class="panel-h"><h3>${totoMark()}Toto — document assistant</h3><span class="faint small" id="totoStat"></span></div><div class="panel-b" style="display:grid;gap:14px">
+        <label class="check"><input type="checkbox" data-k="ai_enabled" ${s.ai_enabled !== '0' ? 'checked' : ''}><span><b>Let Toto read uploads and suggest properties</b><br><span class="small muted">Suggests tags, content type, title, number and date; warns about salary, ID, bank and other personal data; spots near-copies; writes key points and finds similar documents. It runs entirely on this server — no paid service, and nothing is sent outside.</span></span></label>
+        <label class="check"><input type="checkbox" data-k="ai_voice_input" ${s.ai_voice_input !== '0' ? 'checked' : ''}><span><b>Let people talk to Toto with the microphone</b><br><span class="small muted">Toto’s own voice is made by the browser on the computer. Turning speech into text is done by the browser’s speech service — in Chrome that is Google’s and in Edge Microsoft’s — so only the spoken question leaves the computer, never documents. Switch this off if even that is not allowed.</span></span></label>
+        <div class="field"><label>Toto’s creator</label><input class="input" data-k="ai_creator" value="${esc(s.ai_creator || 'Om Khadka')}"><span class="hint">Toto tells everyone who asks that this person programmed the platform and him.</span></div>
+        <div id="totoIdx" class="small muted"></div>
+        <div><div class="label" style="margin-bottom:6px">What Toto has been taught</div><div id="totoFacts" class="small muted">Administrators teach Toto in Ask Toto: “remember that the site office opens at 7 am”.</div></div>
+        <div class="btn-row"><button class="btn sm" id="totoRebuild">${icon('sparkle', 'sm')}Rebuild Toto's index</button><span class="small faint" id="totoProg"></span></div></div></div>
+      <div class="panel"><div class="panel-h"><h3>${icon('edit')}Editing in Word, Excel &amp; PowerPoint</h3></div><div class="panel-b" style="display:grid;gap:10px">
+        <p class="small muted" style="margin:0">When someone is asked for input on a document, they open it in their own Office app straight from the hub and save it back. That needs the server to let Office’s WebDAV requests through (some hosts block them). Test it here.</p>
+        <div class="btn-row"><button class="btn sm" id="davTest">${icon('check', 'sm')}Test Office editing</button></div><div id="davRes" class="small"></div></div></div>
       <div class="panel"><div class="panel-h"><h3>Server</h3></div><div class="panel-b"><dl class="kv">
         <dt>Version</dt><dd>${esc(sv.app_version)}</dd><dt>PHP</dt><dd>${esc(sv.php)}</dd><dt>Database</dt><dd>${esc(sv.mysql)}</dd><dt>Memory</dt><dd>${esc(sv.memory_limit)}</dd>
         <dt>ZIP support</dt><dd>${sv.zip ? 'Yes' : '<span style="color:var(--red)">Missing — enable the zip extension in cPanel → Select PHP Version</span>'}</dd>
-        <dt>Storage</dt><dd>${sv.storage_writable ? 'Writable' : '<span style="color:var(--red)">Not writable — check folder permissions</span>'}</dd></dl></div></div>
+        <dt>Storage</dt><dd>${sv.storage_writable ? 'Writable' : '<span style="color:var(--red)">Not writable — check folder permissions</span>'}<div class="mono small" style="word-break:break-all">${esc(sv.storage_path)}</div>${sv.storage_public ? '<div class="small" style="color:var(--amber)">Inside the website folder — protected by .htaccess, but safer outside public_html.</div>' : '<div class="small muted">Outside the website folder — files can only be reached through the platform.</div>'}</dd></dl></div></div>
     </div>`;
+  const totoStatus = async () => {
+    const t = await api('admin.ai_status');
+    $('#totoStat').textContent = t.on ? 'On' : 'Off';
+    $('#totoIdx').innerHTML = `${t.indexed} of ${t.total} documents read${t.indexed && t.up_to_date < t.indexed ? ` (${t.indexed - t.up_to_date} out of date)` : ''} · key points for ${t.summaries}`
+      + (t.flagged ? ` · <b style="color:var(--amber)">${plural(t.flagged, 'document looks', 'documents look')} more sensitive than its classification</b>` : '')
+      + (t.needs_rebuild ? '<br><b>Rebuild the index once</b> so Toto knows the documents uploaded before it was added.' : t.last_rebuild ? `<br>Last rebuilt ${esc(fmtDate(t.last_rebuild, true))}.` : '');
+    $('#totoRebuild').disabled = !t.on;
+  };
+  totoStatus();
+  const totoFacts = async () => {
+    const { facts } = await api('admin.ai_facts');
+    if (facts.length) $('#totoFacts').innerHTML = `<ul class="toto-facts">${facts.map((f) => `<li><span>${esc(f.fact)}<span class="faint"> — ${esc(f.name || '')}, ${esc(fmtDate(f.created_at))}</span></span><button class="mini-btn" data-fact="${f.id}" title="Make Toto forget this">${icon('x', 'sm')}</button></li>`).join('')}</ul>`;
+  };
+  totoFacts();
+  $('#totoFacts').addEventListener('click', async (e) => { const b = e.target.closest('[data-fact]'); if (!b) return; await run(api('admin.ai_fact_delete', { id: +b.dataset.fact }), 'Toto forgot it.'); totoFacts(); });
+  $('#totoRebuild').onclick = async () => {
+    const b = $('#totoRebuild'); b.disabled = true;
+    let after = 0, done = 0;
+    try {
+      for (;;) {
+        const r = await api('admin.ai_rebuild', { after });
+        done += r.done; $('#totoProg').textContent = `Reading… ${done} done, ${r.left} to go`;
+        if (!r.left) break; after = r.next;
+      }
+      $('#totoProg').textContent = `Finished — ${done} documents read.`; toast('Toto has read every document.');
+    } catch (e) { toast(e.message, 'err'); }
+    b.disabled = false; totoStatus();
+  };
+  $('#davTest').onclick = async () => {
+    const out = $('#davRes'); out.innerHTML = 'Testing…';
+    const rows = [];
+    for (const m of ['OPTIONS', 'PROPFIND', 'LOCK', 'PUT', 'UNLOCK']) {
+      let ok = false, why = '';
+      try {
+        const res = await fetch('dav/selftest/test.docx', { method: m, body: ['PUT', 'LOCK', 'PROPFIND'].includes(m) ? 'test' : undefined, credentials: 'omit', cache: 'no-store' });
+        ok = res.headers.get('X-KM-Dav') === 'ok'; why = ok ? '' : `the server answered ${res.status}`;
+      } catch (e) { why = 'blocked'; }
+      rows.push(`<div>${ok ? '✅' : '❌'} <b>${m}</b>${why ? ' — ' + esc(why) : ''}</div>`);
+    }
+    const allOk = !rows.some((x) => x.includes('❌'));
+    out.innerHTML = rows.join('') + (allOk ? '<p style="color:var(--green,#2E7D32)"><b>All good.</b> Word, Excel and PowerPoint can open and save documents from this server.</p>'
+      : '<p style="color:var(--red)"><b>Your host blocks some of these.</b> Ask hosting support to allow the WebDAV methods PROPFIND, LOCK, UNLOCK and PUT for the <code>/dav/</code> folder of this site (usually a ModSecurity rule). Until then people can still use “Download → edit → upload your copy”.</p>');
+  };
   $('#sSave').onclick = async () => {
     const out = {};
     $$('[data-k]', page).forEach((el) => { out[el.dataset.k] = el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value; });
@@ -395,6 +448,7 @@ route('/admin/settings', async (page) => {
     if (flowChanged && out.approval_workflow !== '1' && !await confirmBox('Switch off approvals? Every document still waiting for approval will be published now.', { ok: 'Switch off' })) return;
     await run(api('admin.settings_save', out), 'Settings saved.');
     Object.assign(S.settings, { site_name: out.site_name, org_name: out.org_name, welcome_text: out.welcome_text });
-    if (flowChanged) location.reload();
+    const totoChanged = (out.ai_enabled === '1') !== !!S.settings.ai;
+    if (flowChanged || totoChanged) location.reload();
   };
 });

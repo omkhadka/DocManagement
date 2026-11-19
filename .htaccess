@@ -13,10 +13,12 @@ DirectoryIndex index.php
 <IfModule mod_rewrite.c>
   RewriteEngine On
   # Force HTTPS (the SSL certificate is active). Comment these three lines out only if the site has no certificate.
+  # (a client-sent X-Forwarded-Proto header is deliberately NOT trusted here)
   RewriteCond %{HTTPS} off
-  RewriteCond %{HTTP:X-Forwarded-Proto} !https
   RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
   RewriteRule ^(app|storage)(/|$) - [F,L]
+  # Word / Excel / PowerPoint open and save documents for a request for input here
+  RewriteRule ^dav(/.*)?$ dav.php [L]
   RewriteRule (^|/)\. - [F,L]
 </IfModule>
 

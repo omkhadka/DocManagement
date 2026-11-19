@@ -23,7 +23,10 @@ function ensureInkDefs() {
 const stampTilt = (seed) => (((Number(seed) || 7) * 37) % 11) - 5;   // −5…+5°, the same every time for a document
 let sealSeq = 0;
 
-/** Round company seal: "TGISL · DOCUMENT CONTROL" ring, APPROVED band, initials and date. */
+/** The seal's ring text: the platform name and DOCUMENT CONTROL. */
+function sealRing() { return String(S.settings.site_name || 'KM Platform').toUpperCase().replace(/\s+/g, ' ').trim().slice(0, 24) + ' ★ DOCUMENT CONTROL ★ '; }
+
+/** Round company seal: "<platform> · DOCUMENT CONTROL" ring, APPROVED band, initials and date. */
 function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 'APPROVED' } = {}) {
   ensureInkDefs();
   const id = 'sealring' + (++sealSeq);
@@ -38,7 +41,7 @@ function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 
         <circle cx="60" cy="60" r="38" stroke-width="1.4"/>
         <path id="${id}" d="M60,60 m-44.5,0 a44.5,44.5 0 1,1 89,0 a44.5,44.5 0 1,1 -89,0" stroke="none"/>
         <text fill="currentColor" stroke="none" font-size="8.4" font-weight="700" letter-spacing="1.35" font-family="Instrument Sans, sans-serif">
-          <textPath href="#${id}" startOffset="0">TGISL ★ DOCUMENT CONTROL ★ KNOWLEDGE HUB ★</textPath></text>
+          <textPath href="#${id}" startOffset="0" textLength="274" lengthAdjust="spacing">${esc(sealRing())}</textPath></text>
         <rect x="9" y="49" width="102" height="22" fill="var(--surface)" stroke-width="2"/>
         <rect x="12" y="52" width="96" height="16" stroke-width=".8"/>
         <text x="60" y="65" text-anchor="middle" fill="currentColor" stroke="none" font-size="${word.length > 8 ? 12.2 : 13.5}" font-weight="800" letter-spacing="${word.length > 8 ? 1.6 : 2.2}" font-family="Instrument Sans, sans-serif">${esc(word)}</text>
@@ -52,7 +55,7 @@ function seal({ date = '', by = '', seed = 1, size = 116, press = false, word = 
 function rectStamp(kind, { sub = '', seed = 1, size = 150 } = {}) {
   ensureInkDefs();
   const t = { draft: ['DRAFT', 'NOT FOR USE'], pending: ['IN REVIEW', sub || 'AWAITING APPROVAL'], rejected: ['RETURNED', 'FOR CHANGES'],
-    confidential: ['CONFIDENTIAL', 'TGISL'], restricted: ['RESTRICTED', 'NAMED ACCESS ONLY'] }[kind] || [String(kind).toUpperCase(), sub];
+    confidential: ['CONFIDENTIAL', 'DO NOT SHARE'], restricted: ['RESTRICTED', 'NAMED ACCESS ONLY'] }[kind] || [String(kind).toUpperCase(), sub];
   const dash = kind === 'draft' ? 'stroke-dasharray="5 3"' : '';
   return `<span class="rstamp ${kind}" style="--tilt:${stampTilt(seed) * 0.8}deg" role="img" aria-label="${esc(t[0])}">
     <svg viewBox="0 0 160 58" width="${size}" height="${size * 58 / 160}" aria-hidden="true"><g filter="url(#km-ink)" fill="none" stroke="currentColor">

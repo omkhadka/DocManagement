@@ -5,7 +5,7 @@ function public_settings(): array {
     return [
         'site_name' => setting('site_name', 'TGISL Knowledge Hub'), 'org_name' => setting('org_name', ''),
         'welcome_text' => setting('welcome_text', ''), 'max_upload_mb' => (int)setting('max_upload_mb', 100),
-        'allowed_ext' => allowed_ext(), 'version' => KM_VERSION, 'approvals' => approvals_on(),
+        'allowed_ext' => allowed_ext(), 'version' => KM_VERSION, 'approvals' => approvals_on(), 'ai' => ai_on(), 'voice_input' => setting('ai_voice_input', '1') === '1',
         'server_upload_mb' => (int)min(ini_bytes(ini_get('upload_max_filesize')), ini_bytes(ini_get('post_max_size'))) / 1048576,
     ];
 }
@@ -32,16 +32,34 @@ function user_payload(array $u): array {
     return $u;
 }
 
-/** Password + lock checks shared by sign-in. Returns the user row. */
-function check_lock(array $u): void {
-    if ($u['locked_until'] && strtotime($u['locked_until']) > time()) {
-        fail('Too many failed attempts. Try again in ' . max(1, (int)ceil((strtotime($u['locked_until']) - time()) / 60)) . ' minutes.', 429);
+/*
+ * Throttling. Failures are counted per device (IP address), never as a lock on the whole account,
+ * so nobody can lock a colleague out by typing wrong passwords from elsewhere:
+ *   - one IP: at most 10 failures in 10 minutes (any accounts)      -> that IP waits
+ *   - one IP + one account: at most 5 failures in 15 minutes          -> that IP waits for that account
+ *   - one account from many IPs: every failure beyond 20 in 15 minutes slows each further try (up to 3 s)
+ */
+const THROTTLE_IP_MAX = 10, THROTTLE_IP_MIN = 10, THROTTLE_PAIR_MAX = 5, THROTTLE_PAIR_MIN = 15, THROTTLE_SLOW_AFTER = 20;
+
+function check_lock(?array $u, string $email = ''): void {
+    $ip = client_ip();
+    $wait = function (string $sql, array $p, int $minutes) {
+        $first = val($sql, $p);
+        return $first ? max(1, (int)ceil((strtotime((string)$first) + $minutes * 60 - time()) / 60)) : 1;
+    };
+    $ipN = (int)val('SELECT COUNT(*) FROM auth_failures WHERE ip=? AND created_at > DATE_SUB(NOW(), INTERVAL ' . THROTTLE_IP_MIN . ' MINUTE)', [$ip]);
+    if ($ipN >= THROTTLE_IP_MAX) fail('Too many failed attempts from this device. Try again in ' . $wait('SELECT MIN(created_at) FROM (SELECT created_at FROM auth_failures WHERE ip=? AND created_at > DATE_SUB(NOW(), INTERVAL ' . THROTTLE_IP_MIN . ' MINUTE) ORDER BY created_at DESC LIMIT ' . THROTTLE_IP_MAX . ') x', [$ip], THROTTLE_IP_MIN) . ' minutes.', 429);
+    if ($u) {
+        $pairN = (int)val('SELECT COUNT(*) FROM auth_failures WHERE user_id=? AND ip=? AND created_at > DATE_SUB(NOW(), INTERVAL ' . THROTTLE_PAIR_MIN . ' MINUTE)', [$u['id'], $ip]);
+        if ($pairN >= THROTTLE_PAIR_MAX) fail('Too many failed attempts. Try again in ' . $wait('SELECT MIN(created_at) FROM (SELECT created_at FROM auth_failures WHERE user_id=? AND ip=? AND created_at > DATE_SUB(NOW(), INTERVAL ' . THROTTLE_PAIR_MIN . ' MINUTE) ORDER BY created_at DESC LIMIT ' . THROTTLE_PAIR_MAX . ') x', [$u['id'], $ip], THROTTLE_PAIR_MIN) . ' minutes.', 429);
+        $acctN = (int)val('SELECT COUNT(*) FROM auth_failures WHERE user_id=? AND created_at > DATE_SUB(NOW(), INTERVAL ' . THROTTLE_PAIR_MIN . ' MINUTE)', [$u['id']]);
+        if ($acctN > THROTTLE_SLOW_AFTER) usleep(min(3000000, ($acctN - THROTTLE_SLOW_AFTER) * 250000));   // slows a spread-out attack without locking the owner out
     }
 }
-function count_failure(array $u, string $action): void {
-    $n = (int)$u['failed_logins'] + 1;
-    update('users', ['failed_logins' => $n, 'locked_until' => $n >= 5 ? date('Y-m-d H:i:s', time() + 900) : null], 'id=?', [$u['id']]);
-    insert('audit_log', ['user_id' => $u['id'], 'action' => $action, 'object_type' => 'user', 'object_id' => $u['id'], 'ip' => client_ip()]);
+function count_failure(?array $u, string $action, string $email = ''): void {
+    insert('auth_failures', ['ip' => client_ip(), 'user_id' => $u['id'] ?? null, 'email' => mb_substr($email ?: (string)($u['email'] ?? ''), 0, 190), 'kind' => $action === 'mfa_failed' ? 'code' : 'password']);
+    if ($u) insert('audit_log', ['user_id' => $u['id'], 'action' => $action, 'object_type' => 'user', 'object_id' => $u['id'], 'ip' => client_ip()]);
+    if (mt_rand(1, 50) === 1) q('DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 1 DAY)');
     usleep(300000);
 }
 
@@ -61,7 +79,8 @@ function complete_login(array $u, string $how = ''): array {
     $_SESSION['uid'] = (int)$u['id'];
     bind_session_password((int)$u['id']);
     $_SESSION['csrf'] = bin2hex(random_bytes(24));
-    update('users', ['failed_logins' => 0, 'locked_until' => null, 'last_login' => now()], 'id=?', [$u['id']]);
+    update('users', ['last_login' => now()], 'id=?', [$u['id']]);
+    q('DELETE FROM auth_failures WHERE user_id=? AND ip=?', [$u['id'], client_ip()]);   // a successful sign-in clears this device's count
     insert('audit_log', ['user_id' => $u['id'], 'action' => 'login', 'object_type' => 'user', 'object_id' => $u['id'], 'details' => $how, 'ip' => client_ip()]);
     current_user(true);
     return api_auth_session();
@@ -72,9 +91,9 @@ function api_auth_login() {
     $email = strtolower(sarg('email', '', 190));
     $pass = (string)arg('password', '');
     $u = one('SELECT * FROM users WHERE email = ?', [$email]);
-    if ($u) check_lock($u);
+    check_lock($u, $email);
     if (!$u || !password_verify($pass, $u['password_hash'])) {
-        if ($u) count_failure($u, 'login_failed'); else usleep(300000);
+        count_failure($u, 'login_failed', $email);   // unknown emails count against the device too
         fail('Email or password is incorrect.', 401);
     }
     if (!$u['active']) fail('This account is deactivated. Contact your administrator.', 403);
@@ -186,14 +205,15 @@ function api_auth_mfa_status() {
 
 /** Checks a code for a signed-in user (for sensitive changes). */
 function require_current_code(array $u): void {
-    $row = one('SELECT mfa_secret, mfa_last_step, failed_logins, locked_until FROM users WHERE id=?', [$u['id']]);
-    check_lock($row);
+    $row = one('SELECT mfa_secret, mfa_last_step FROM users WHERE id=?', [$u['id']]);
+    check_lock($u);
+    if (mfa_decrypt($row['mfa_secret']) === '') fail('Two-step verification is not set up for your account.', 409);
     $code = trim(sarg('code', '', 40));
     if (preg_match('/^\d[\d ]*$/', $code)) {
         $step = totp_verify(mfa_decrypt($row['mfa_secret']), $code, (int)$row['mfa_last_step']);
         if ($step) { update('users', ['mfa_last_step' => $step], 'id=?', [$u['id']]); return; }
     } elseif ($code !== '' && mfa_use_recovery($u['id'], $code) >= 0) return;
-    count_failure(['id' => $u['id'], 'failed_logins' => $row['failed_logins']], 'mfa_failed');   // 5 wrong codes lock the account for 15 minutes
+    count_failure($u, 'mfa_failed');   // counted per device, like sign-in
     fail('That code is not correct. Enter the newest 6-digit code from your authenticator app.', 422);
 }
 
@@ -245,6 +265,7 @@ function api_auth_change_password() {
     if (strlen($new) < 8) fail('Use at least 8 characters for the new password.');
     update('users', ['password_hash' => password_hash($new, PASSWORD_DEFAULT), 'must_change_pw' => 0], 'id=?', [$u['id']]);
     bind_session_password($u['id']);   // this session stays signed in; any other session is signed out
+    mfa_forget_devices($u['id']);      // and every remembered browser must pass two-step again
     audit('password_change', 'user', $u['id']);
     return ['message' => 'Password changed.'];
 }

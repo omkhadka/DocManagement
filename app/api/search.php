@@ -1,6 +1,9 @@
 <?php
 declare(strict_types=1);
 require_once KM_APP . '/api/docs.php';
+require_once KM_APP . '/toto_ask.php';
+require_once KM_APP . '/toto_chat.php';
+require_once KM_APP . '/toto_help.php';
 
 /** Splits "pump type:pdf owner:grace \"fire water\"" into words, phrases and operators. */
 function parse_query(string $q): array {
@@ -148,4 +151,49 @@ function api_search_unsave() {
     must_post();
     q('DELETE FROM saved_searches WHERE id=? AND user_id=?', [iarg('id'), me()['id']]);
     return [];
+}
+
+/** Ask Toto: a question in plain words → a librarian's answer (only documents this person can open). */
+function api_search_ask() {
+    must_post();
+    $u = me();
+    if (!ai_on()) fail('Toto is switched off. An administrator can switch it on in Settings.');
+    $in = input();
+    $q = is_scalar($in['q'] ?? null) ? (string)$in['q'] : '';
+    if (trim($q) === '' && empty($in['remove'])) fail('Type a question for Toto.');
+    // a person asks at conversation speed; scripts that hammer the endpoint are slowed down
+    $now = time();
+    $_SESSION['ask_times'] = array_values(array_filter((array)($_SESSION['ask_times'] ?? []), fn($t) => $t > $now - 60));
+    if (count($_SESSION['ask_times']) >= 40) fail('That was a lot of questions in a minute — give Toto a moment and ask again.', 429);
+    $_SESSION['ask_times'][] = $now;
+    $ctx = ask_clean_context($in['context'] ?? null);
+    // filters sent back by the browser are re-checked: libraries this person can't open are dropped
+    if ($ctx) $ctx['lib'] = array_values(array_filter($ctx['lib'], fn($id) => (bool)val('SELECT id FROM libraries WHERE id=? AND deleted_at IS NULL', [$id]) && container_level($id, null, $u) >= LVL_READ));
+    if ($ctx && isset($in['context']['_intent']) && in_array($in['context']['_intent'], ['find', 'count', 'who', 'answer'], true)) $ctx['_intent'] = $in['context']['_intent'];
+    $remove = array_slice(array_filter((array)($in['remove'] ?? []), 'is_array'), 0, 20);
+    $q = trim(mb_substr($q, 0, 400));
+    $chat = chat_clean_state($in['chat'] ?? null);
+    $prefix = [];
+    if ($q !== '' && !$remove) {
+        // 1. Toto's temper (insults, shouting, impatience, repeats, apologies)
+        [$chat, $override, $prefix] = toto_temper($q, $chat, $u);
+        if ($override) return $override + ['context' => $ctx];
+        // 2. "how do I …" about the platform
+        if ($h = toto_help($q, $u)) {
+            return ['intent' => 'help', 'reply' => array_merge($prefix, [str_replace('%s', '**' . $h['title'] . '**', chat_pick(['Sure! %s, step by step:', 'Easy one — %s:', 'Happy to explain. %s:', 'Here’s how it works — %s:']))]),
+                'steps' => $h['steps'], 'actions' => $h['actions'], 'mood' => 'happy', 'chat' => $chat, 'context' => $ctx, 'docs' => [], 'chips' => [], 'total' => 0,
+                'suggest' => ['What else can you do?']];
+        }
+        // 3. small talk
+        if ($c = toto_chat($q, $chat, $u)) {
+            $c['reply'] = array_merge($prefix, $c['reply']);
+            return $c + ['context' => $ctx];
+        }
+    }
+    // 4. the librarian
+    $r = toto_ask($q, $ctx, $remove, $u);
+    $r['reply'] = array_merge($prefix, $r['reply']);
+    $r['chat'] = $chat;
+    $r['mood'] = $r['mood'] ?? (($chat['annoy'] ?? 0) >= 2 ? 'grumpy' : ($r['total'] ? 'happy' : 'sorry'));
+    return $r;
 }

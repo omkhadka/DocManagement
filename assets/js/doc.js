@@ -45,10 +45,14 @@ route('/doc/(\\d+)', async (page, [id], params) => {
       ${d.status === 'rejected' && lastReject ? `<div class="alert red">${icon('alert')}<div class="grow"><b>${esc(lastReject.decider)} requested changes</b>${esc(lastReject.note)}</div>${c.upload_version ? `<button class="btn sm" data-a="version">Upload fix</button>` : ''}</div>` : ''}
       ${!S.settings.approvals && d.status !== 'published' && c.publish_direct ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Not published yet</b>This version was saved before direct publishing was switched on, so only you and a few others can see it.</div><button class="btn sm primary" data-a="publish">${icon('check', 'sm')}Publish now</button></div>` : ''}
       ${d.status === 'draft' && c.submit ? `<div class="alert teal">${icon('info')}<div class="grow"><b>Draft</b>Only you and approvers can see this version.</div><button class="btn sm primary" data-a="submit">${icon('send', 'sm')}Send for approval</button>${c.publish_direct ? `<button class="btn sm" data-a="approve">Publish now</button>` : ''}</div>` : ''}
-      ${d.checked_out_by ? `<div class="alert amber">${icon('lock')}<div class="grow"><b>Checked out by ${d.checked_out_by === S.user.id ? 'you' : esc(d.checked_out_name)}</b>${d.checked_out_by === S.user.id ? 'Upload the new version to check it in automatically, or release it.' : 'You can read it, but new versions are blocked until it’s checked in.'}</div>
+      ${inputBanner(r)}
+      ${d.checked_out_by && !r.input?.open ? `<div class="alert amber">${icon('lock')}<div class="grow"><b>Checked out by ${d.checked_out_by === S.user.id ? 'you' : esc(d.checked_out_name)}</b>${d.checked_out_by === S.user.id ? 'Upload the new version to check it in automatically, or release it.' : 'You can read it, but new versions are blocked until it’s checked in.'}</div>
         ${d.checked_out_by === S.user.id || c.permissions ? `<button class="btn sm" data-a="checkin">Release</button>` : ''}</div>` : ''}
       ${r.ocr?.needed ? `<div class="alert teal" id="ocrNotice">${icon('search')}<div class="grow"><b>Words in this file can't be searched yet</b>It's a scan or a picture, so it contains no real text. ${r.ocr.can ? 'Text recognition reads the words so search can find them — it runs here in your browser.' : 'The author or an approver can make it searchable.'}</div>
         ${r.ocr.can ? `<button class="btn sm primary" data-a="ocr">${icon('sparkle', 'sm')}Make it searchable</button>` : ''}</div>` : ''}
+      ${r.toto?.sensitive ? `<div class="alert amber toto-alert">${icon('shield')}<div class="grow"><b>${totoMark()} Toto thinks this document is more sensitive than “${esc(CONF_NAME[d.confidentiality] || d.confidentiality)}”</b>
+        It contains: ${esc(r.toto.sensitive.reasons.filter((x) => x.level !== 'confidential' || r.toto.sensitive.level === 'confidential').map((x) => x.label).join('; '))}. Consider classifying it as <strong>${esc(CONF_NAME[r.toto.sensitive.level])}</strong>.</div>
+        ${c.edit ? `<button class="btn sm" data-a="edit">${icon('edit', 'sm')}Change classification</button>` : ''}</div>` : ''}
       ${c.review && (d.review_overdue || d.review_due_soon) ? `<div class="alert amber">${icon('history')}<div class="grow"><b>${d.review_overdue ? 'Review overdue' : 'Review due soon'}</b>${d.review_overdue ? 'This document was due for review on' : 'This document is due for review on'} ${esc(fmtDate(d.review_date))}. Check it is still correct, upload a new version if anything changed, then mark it as reviewed.</div>
         <button class="btn sm" data-a="reviewed">${icon('check', 'sm')}Mark as reviewed</button></div>` : ''}
     </div>
@@ -70,10 +74,13 @@ route('/doc/(\\d+)', async (page, [id], params) => {
       </div>
       <div class="side-stack">
         ${titleBlock(d, r.approvals, { press: pressed })}
+        ${r.toto?.summary?.length ? `<div class="panel toto-panel"><div class="panel-h"><h3>${totoMark()}Key points</h3><span class="faint small" title="Sentences picked from the document by Toto, the built-in assistant">by Toto</span></div>
+          <div class="panel-b"><ul class="toto-points">${r.toto.summary.map((x) => `<li>${esc(x)}</li>`).join('')}</ul><div class="faint small">Picked from the document's own text — read the document for the full picture.</div></div></div>` : ''}
         <div class="panel"><div class="panel-h"><h3>Properties</h3>${c.edit ? `<button class="btn sm ghost" data-a="edit">${icon('edit', 'sm')}Edit</button>` : ''}</div>
           <div class="panel-b"><dl class="kv">
             ${d.description ? `<dt>Description</dt><dd>${esc(d.description)}</dd>` : ''}
             ${r.props.filter((p) => (Array.isArray(p.value) ? p.value.length : p.value)).map((p) => `<dt>${esc(p.name)}</dt><dd>${propValue(p)}</dd>`).join('')}
+            ${r.free_terms?.length ? `<dt>Tags</dt><dd><div class="chips">${r.free_terms.map((t) => `<span class="chip ghost">${esc(t.label)}</span>`).join('')}</div></dd>` : ''}
             ${d.keywords ? `<dt>Keywords</dt><dd><div class="chips">${d.keywords.split(',').map((k) => k.trim()).filter(Boolean).map((k) => `<a class="chip ghost" href="#/search?q=${encodeURIComponent(k)}">${esc(k)}</a>`).join('')}</div></dd>` : ''}
             <dt>Classification</dt><dd>${conf(d.confidentiality)}${d.classification_rule ? `<div class="small muted" style="margin-top:4px">${esc(d.classification_rule)}${d.named_count ? ` ${plural(d.named_count, 'person or group', 'people or groups')} named.` : ''}${c.permissions ? ` <a href="" data-a="perms">Manage who can see it</a>` : ''}</div>` : ''}</dd>
             ${d.review_date ? `<dt>Next review</dt><dd>${esc(fmtDate(d.review_date))}${d.review_overdue ? ' <span style="color:var(--amber)">· overdue</span>' : ''}</dd>` : ''}
@@ -82,12 +89,12 @@ route('/doc/(\\d+)', async (page, [id], params) => {
             <dt>Usage</dt><dd>${plural(d.views, 'view')} by ${plural(d.viewers, 'person', 'people')} · ${plural(d.downloads, 'download')}</dd>
             <dt>Your access</dt><dd>${esc(r.level_name)}${d.inherit ? '' : ' · unique permissions'}</dd>
           </dl></div>
-          ${r.suggest.length ? `<div class="panel-b" style="border-top:1px solid var(--line)"><div class="label" style="display:flex;gap:6px;align-items:center;margin-bottom:8px">${icon('sparkle', 'sm')}Suggested tags from the content</div>
+          ${r.suggest.length ? `<div class="panel-b" style="border-top:1px solid var(--line)"><div class="label" style="display:flex;gap:6px;align-items:center;margin-bottom:8px">${totoMark()}Toto suggests these tags</div>
             <div class="chips">${r.suggest.map((s) => `<button class="chip add" data-addterm="${s.id}" title="${esc(s.termset)}">${icon('plus', 'sm')}${esc(s.label)}</button>`).join('')}</div></div>` : ''}
         </div>
         <div class="panel"><div class="panel-h"><h3>Related documents</h3>${c.edit ? `<button class="btn sm ghost" data-a="link">${icon('link', 'sm')}Link</button>` : ''}</div>
           <div class="doc-rows">${r.related.map((x) => miniRow(x, c.edit ? `<button class="mini-btn" data-unlink="${x.id}" title="Remove link">${icon('x', 'sm')}</button>` : '')).join('') || '<div class="panel-b faint small">No linked documents yet.</div>'}</div>
-          ${r.similar.length ? `<div class="panel-h" style="border-top:1px solid var(--line)"><h3 class="muted" style="font-size:13px">Similar by tags</h3></div><div class="doc-rows">${r.similar.map((x) => miniRow(x, `<span class="faint small">${x.shared} shared</span>`)).join('')}</div>` : ''}
+          ${r.similar.length ? `<div class="panel-h" style="border-top:1px solid var(--line)"><h3 class="muted" style="font-size:13px">${r.toto?.on ? `${totoMark()}Similar documents` : 'Similar by tags'}</h3>${r.toto?.on ? '<span class="faint small">found by Toto</span>' : ''}</div><div class="doc-rows">${r.similar.map((x) => miniRow(x, `<span class="faint small" title="${x.match ? 'How alike the text is' : 'Tags in common'}">${x.near_copy ? '<b style="color:var(--amber)">near copy</b> · ' : ''}${x.match ? x.match + '% alike' : ''}${x.match && x.shared ? ' · ' : ''}${x.shared ? plural(x.shared, 'shared tag') : ''}</span>`)).join('')}</div>` : ''}
         </div>
       </div>
     </div>`;
@@ -152,6 +159,23 @@ route('/doc/(\\d+)', async (page, [id], params) => {
     if (act === 'reject') { const note = await promptBox({ title: 'Request changes', label: 'What should the author change?', textarea: true, ok: 'Send back' }); if (!note) return; await run(api('docs.reject', { id, note }), (x) => x.message); refreshCounts(); return navigate(); }
     if (act === 'submit') { const note = await promptBox({ title: 'Send for approval', label: 'Message for the approver (optional)', textarea: true, required: false, ok: 'Send for approval' }); if (note === null) return; await run(api('docs.submit', { id, note }), 'Sent for approval.'); return navigate(); }
     if (act === 'withdraw') { await run(api('docs.cancel_request', { id }), 'Request withdrawn.'); return navigate(); }
+    if (act === 'input-done') {
+      const o = r.input.open;
+      const note = await promptBox({ title: 'Finish your input', label: o.saved_at ? `Your last save (${fmtDate(o.saved_at, true)}) becomes the next version. Anything to tell ${o.requester}? (optional)` : `You haven’t saved any changes yet — finishing now leaves the document as it was. A note for ${o.requester}? (optional)`, textarea: true, required: false, ok: 'I’m done' });
+      if (note === null) return;
+      await run(api('docs.input_done', { id, comment: note || '' }), (x) => x.message); return navigate();
+    }
+    if (act === 'input-cancel') {
+      const o = r.input.open;
+      if (!await confirmBox(`Withdraw the request to ${o.assignee}?${o.saved_at ? ' Changes they saved but haven’t finished will be discarded.' : ''} The document is unlocked again.`, { ok: 'Withdraw', danger: !!o.saved_at })) return;
+      await run(api('docs.input_cancel', { id }), (x) => x.message); return navigate();
+    }
+    if (act === 'input-upload') {
+      const fi = document.createElement('input'); fi.type = 'file'; fi.accept = '.' + d.ext;
+      fi.onchange = async () => { if (!fi.files[0]) return; const fd = new FormData(); fd.append('id', id); fd.append('file', fi.files[0]);
+        try { const x = await xhrUpload(fd, () => {}, 'docs.input_upload'); toast(x.message); navigate(); } catch (err) { toast(err.message, 'err'); } };
+      fi.click(); return;
+    }
     if (act === 'checkin') { await run(api('docs.checkout', { id, action: 'in' }), 'Released.'); return navigate(); }
     if (act === 'edit') return editProps(r, navigate);
     if (act === 'link') return linkDoc(id);
@@ -212,6 +236,7 @@ function moreMenu(anchor, r) {
   const items = [
     c.checkout && !d.checked_out_by ? ['lock', 'Check out (lock for editing)', async () => { await run(api('docs.checkout', { id: d.id, action: 'out' }), (x) => x.message); navigate(); }] : null,
     c.edit ? ['edit', 'Edit properties', () => editProps(r, navigate)] : null,
+    r.input?.can_request ? ['users', 'Request input…', () => requestInput(r, navigate)] : null,
     ['link', 'Copy link', () => { navigator.clipboard?.writeText(location.origin + location.pathname + '#/doc/' + d.id); toast('Link copied.'); }],
     c.move ? ['move', 'Move', () => openMove([d.id], navigate)] : null,
     c.permissions ? ['shield', 'Manage permissions', () => openPermissions('document', d.id, d.title, navigate)] : null,
@@ -309,5 +334,50 @@ function markReviewed(d, onDone) {
   m.$('[data-ok]').onclick = async () => {
     await run(api('docs.reviewed', { id: d.id, next: m.$('#rvNone').checked ? '' : m.$('#rvNext').value, note: m.$('#rvNote').value }), (x) => x.message);
     m.close(); onDone();
+  };
+}
+
+
+/* ---------------- Requests for input ---------------- */
+function inputBanner(r) {
+  const o = r.input?.open; if (!o) return '';
+  const due = o.due_date ? ` · due <strong>${esc(fmtDate(o.due_date))}</strong>${o.due_date < localISODate(0) ? ' <span style="color:var(--red)">(overdue)</span>' : ''}` : '';
+  const saved = o.saved_at ? `Last saved ${esc(fmtDate(o.saved_at, true))}${o.saves > 1 ? ` · ${o.saves} saves` : ''}.` : 'No changes saved yet.';
+  if (o.mine) {
+    const dl = o.link ? o.link.split('|u|')[1] : '';
+    return `<div class="alert input-me">${icon('edit')}<div class="grow"><b>${esc(o.requester)} asked for your input</b>${o.message ? `<span class="input-msg">“${esc(o.message)}”</span>` : ''}
+      <span class="small">Only you can edit this document until you finish${due}. ${saved}</span>
+      <span class="small muted">Edit in ${esc(o.app)} opens the file in the ${esc(o.app)} on your computer. Press Save there as often as you like — then come back and press <strong>I’m done</strong>.
+      No ${esc(o.app)}? <a href="${esc(dl)}" download>Download the file</a>, edit it, and <button class="linklike" data-a="input-upload">upload your copy</button>.</span></div>
+      <div class="btn-col">${o.link ? `<a class="btn sm primary" href="${esc(o.link)}">${icon('edit', 'sm')}Edit in ${esc(o.app)}</a>` : ''}<button class="btn sm" data-a="input-done">${icon('check', 'sm')}I’m done</button></div></div>`;
+  }
+  return `<div class="alert amber">${icon('lock')}<div class="grow"><b>Waiting for input from ${esc(o.assignee)}</b>${o.message ? `<span class="input-msg">“${esc(o.message)}”</span>` : ''}
+    <span class="small">Asked by ${esc(o.requester)} ${esc(fmtDate(o.created_at))}${due}. Only ${esc(o.assignee.split(' ')[0])} can edit it until they finish. ${saved}</span></div>
+    ${o.can_cancel ? `<button class="btn sm ghost" data-a="input-cancel">Withdraw request</button>` : ''}</div>`;
+}
+
+async function requestInput(r, done) {
+  const d = r.doc;
+  const dir = await loadDir();
+  const people = dir.people.filter((p) => p.id !== S.user.id);
+  const m = modal({ title: 'Request input', body: `
+    <p class="muted" style="margin-top:0">Choose <b>one person</b>. Only they will be able to edit <b>${esc(d.title)}</b> — in their own Word, Excel or PowerPoint — until they finish or you withdraw the request. Their saves become the next version.</p>
+    <div class="field"><label for="riFind">Who should give input?</label><input class="input" id="riFind" placeholder="Type a name…" autocomplete="off"><div class="ri-list" id="riList"></div></div>
+    <div class="field"><label for="riMsg">What do you need from them?</label><textarea class="input" id="riMsg" rows="3" placeholder="e.g. Please update section 4 with the new hold time and check the test pressures."></textarea></div>
+    <div class="field"><label for="riDue">Due date <span class="faint">(optional)</span></label><input class="input" type="date" id="riDue" min="${localISODate(0)}" style="max-width:200px"></div>`,
+    foot: `<button class="btn" data-close>Cancel</button><button class="btn primary" data-ok disabled>${icon('send', 'sm')}Send request</button>` });
+  let pick = null;
+  const draw = () => {
+    const q = m.$('#riFind').value.trim().toLowerCase();
+    const list = people.filter((p) => !q || p.name.toLowerCase().includes(q) || (p.department || '').toLowerCase().includes(q) || (p.job_title || '').toLowerCase().includes(q)).slice(0, 8);
+    m.$('#riList').innerHTML = list.map((p) => `<button type="button" class="ri-p ${pick === p.id ? 'on' : ''}" data-p="${p.id}">${avatar(p.name)}<span><b>${esc(p.name)}</b><span class="faint small">${esc([p.job_title, p.department].filter(Boolean).join(' · '))}</span></span>${pick === p.id ? icon('check', 'sm') : ''}</button>`).join('') || '<div class="small muted">Nobody matches.</div>';
+  };
+  draw();
+  m.$('#riFind').addEventListener('input', draw);
+  m.$('#riList').addEventListener('click', (e) => { const b = e.target.closest('[data-p]'); if (!b) return; pick = +b.dataset.p; m.$('[data-ok]').disabled = false; draw(); });
+  m.$('[data-ok]').onclick = async () => {
+    if (!pick) return;
+    try { const x = await api('docs.input_request', { id: d.id, assignee_id: pick, message: m.$('#riMsg').value, due_date: m.$('#riDue').value }); toast(x.message); m.close(); done && done(); }
+    catch (e) { toast(e.message, 'err'); }
   };
 }
